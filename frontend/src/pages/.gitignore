@@ -1,0 +1,12 @@
+# Python Virtual Environment & Cache
+backend/backend/venv/
+__pycache__/
+*.pyc
+
+# Node Modules (Frontend)
+frontend/node_modules/
+frontend/dist/
+
+# Môi trường cấu hình cục bộ & hệ thống
+.env
+.DS_Store
