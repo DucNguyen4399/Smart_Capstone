@@ -1,159 +1,225 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 
 export default function ProductListPage() {
-  const [products, setProducts] = useState([]);
-  const [showForm, setShowForm] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('Tất cả trạng thái');
   
-  // State quản lý dữ liệu nhập vào chuẩn ERD
+  // State quản lý Modal (Thêm hoặc Sửa)
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingProduct, setEditingProduct] = useState(null); // Nếu null là Thêm mới, có dữ liệu là Sửa
+
+  // Danh sách sản phẩm mẫu chuẩn ERP
+  const [products, setProducts] = useState([
+    { id: 'SP001', name: 'Sản phẩm 1', category: 'Đồ uống', unit: 'Chai', importPrice: '10.000 ₫', exportPrice: '13.000 ₫', stock: 6, minStock: 5, date: '09/08/2025', status: 'Đang bán' },
+    { id: 'SP010', name: 'Sản phẩm 10', category: 'Thực phẩm khô', unit: 'Hộp', importPrice: '30.000 ₫', exportPrice: '39.000 ₫', stock: 4, minStock: 10, date: '10/08/2025', status: 'Đang bán' }
+  ]);
+
+  // Form state
   const [formData, setFormData] = useState({
-    sku: '', name: '', category_id: 1, supplier_id: 1, cost_price: '', selling_price: '', safety_stock: ''
+    id: '',
+    name: '',
+    category: 'Thực phẩm',
+    unit: 'Hộp',
+    importPrice: '',
+    exportPrice: '',
+    stock: '',
+    minStock: ''
   });
 
-  // Role hiện tại để xét quyền hiển thị nút Thêm
-  const userRole = localStorage.getItem('role');
-
-  const fetchProducts = () => {
-    fetch('http://127.0.0.1:8000/api/v1/products', {
-      headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-    })
-    .then(res => res.json())
-    .then(data => { if(Array.isArray(data)) setProducts(data); })
-    .catch(err => console.error(err));
+  // Mở modal thêm mới
+  const handleOpenAddModal = () => {
+    setEditingProduct(null);
+    setFormData({ id: '', name: '', category: 'Thực phẩm', unit: 'Hộp', importPrice: '', exportPrice: '', stock: '', minStock: '' });
+    setIsModalOpen(true);
   };
 
-  useEffect(() => {
-    fetchProducts();
-  }, []);
-
-  const handleChange = (e) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
+  // Mở modal chỉnh sửa với dữ liệu cũ
+  const handleOpenEditModal = (product) => {
+    setEditingProduct(product);
+    setFormData({
+      id: product.id,
+      name: product.name,
+      category: product.category || 'Thực phẩm',
+      unit: product.unit,
+      importPrice: product.importPrice.replace(/[^\d]/g, ''),
+      exportPrice: product.exportPrice.replace(/[^\d]/g, ''),
+      stock: product.stock,
+      minStock: product.minStock || 5
+    });
+    setIsModalOpen(true);
   };
 
-  const handleSubmit = async (e) => {
+  // Xử lý Lưu (Thêm mới hoặc Cập nhật)
+  const handleSaveProduct = (e) => {
     e.preventDefault();
-    try {
-      const res = await fetch('http://127.0.0.1:8000/api/v1/products', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify({
-          sku: formData.sku,
-          name: formData.name,
-          category_id: parseInt(formData.category_id),
-          supplier_id: parseInt(formData.supplier_id),
-          cost_price: parseFloat(formData.cost_price),
-          selling_price: parseFloat(formData.selling_price),
-          safety_stock: parseInt(formData.safety_stock)
-        })
-      });
-      
-      if (!res.ok) throw new Error("Lỗi khi thêm sản phẩm");
-      
-      alert("Thêm sản phẩm thành công!");
-      setShowForm(false);
-      setFormData({ sku: '', name: '', category_id: 1, supplier_id: 1, cost_price: '', selling_price: '', safety_stock: '' });
-      fetchProducts(); // Tải lại danh sách ngay lập tức
-    } catch (error) {
-      alert(error.message);
+    const formattedProduct = {
+      ...formData,
+      importPrice: Number(formData.importPrice).toLocaleString() + ' ₫',
+      exportPrice: Number(formData.exportPrice).toLocaleString() + ' ₫',
+      date: new Date().toLocaleDateString('vi-VN'),
+      status: 'Đang bán'
+    };
+
+    if (editingProduct) {
+      // Cập nhật sản phẩm cũ
+      setProducts(products.map(p => p.id === editingProduct.id ? formattedProduct : p));
+    } else {
+      // Thêm sản phẩm mới
+      setProducts([formattedProduct, ...products]);
+    }
+
+    setIsModalOpen(false);
+  };
+
+  // Xử lý Xóa sản phẩm
+  const handleDeleteProduct = (id) => {
+    if (window.confirm(`Bạn có chắc chắn muốn xóa sản phẩm ${id} không?`)) {
+      setProducts(products.filter(p => p.id !== id));
     }
   };
 
   return (
     <div>
-      <div className="content-header">
-        Danh mục Sản phẩm (Catalog)
-      </div>
-
-      {/* THANH CÔNG CỤ (TOOLBAR) */}
-      <div className="action-toolbar">
-        <input type="text" className="search-box" placeholder="🔍 Tìm kiếm theo SKU hoặc Tên..." />
-        
-        {/* Chỉ Admin hoặc Store Manager mới thấy nút này */}
-        {(userRole === 'Admin' || userRole === 'Store Manager') && (
-          <button className="btn-action btn-add" onClick={() => setShowForm(!showForm)}>
-            {showForm ? '✖ Đóng Form' : '+ Thêm Sản Phẩm Mới'}
-          </button>
-        )}
-      </div>
-
-      {/* FORM THÊM SẢN PHẨM (Mở ra khi bấm nút) */}
-      {showForm && (
-        <div className="form-card">
-          <h3>📝 Nhập Thông Tin Sản Phẩm Mới</h3>
-          <form onSubmit={handleSubmit}>
-            <div className="form-grid">
-              <div className="form-group">
-                <label>Mã SKU</label>
-                <input type="text" name="sku" className="form-control" value={formData.sku} onChange={handleChange} required placeholder="VD: MILK-001" />
-              </div>
-              <div className="form-group" style={{ gridColumn: 'span 2' }}>
-                <label>Tên Sản Phẩm</label>
-                <input type="text" name="name" className="form-control" value={formData.name} onChange={handleChange} required placeholder="VD: Sữa tươi Vinamilk 1L" />
-              </div>
-              <div className="form-group">
-                <label>ID Danh Mục</label>
-                <input type="number" name="category_id" className="form-control" value={formData.category_id} onChange={handleChange} required />
-              </div>
-              <div className="form-group">
-                <label>ID Nhà Cung Cấp</label>
-                <input type="number" name="supplier_id" className="form-control" value={formData.supplier_id} onChange={handleChange} required />
-              </div>
-              <div className="form-group">
-                <label>Tồn Kho An Toàn (Safety Stock)</label>
-                <input type="number" name="safety_stock" className="form-control" value={formData.safety_stock} onChange={handleChange} required />
-              </div>
-              <div className="form-group">
-                <label>Giá Vốn (Cost Price)</label>
-                <input type="number" name="cost_price" className="form-control" value={formData.cost_price} onChange={handleChange} required />
-              </div>
-              <div className="form-group">
-                <label>Giá Bán (Selling Price)</label>
-                <input type="number" name="selling_price" className="form-control" value={formData.selling_price} onChange={handleChange} required />
-              </div>
-            </div>
-            <div className="form-actions">
-              <button type="button" className="btn-cancel" onClick={() => setShowForm(false)}>Hủy bỏ</button>
-              <button type="submit" className="btn-action btn-add">Lưu Sản Phẩm</button>
-            </div>
-          </form>
+      <div className="erp-page-header">
+        <div className="erp-filters-group">
+          <input 
+            type="text" 
+            className="erp-input" 
+            placeholder="🔍 Tìm kiếm mã, tên sản phẩm..." 
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+          <select className="erp-select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+            <option>Tất cả trạng thái</option>
+            <option>Đang bán</option>
+            <option>Ngừng kinh doanh</option>
+          </select>
         </div>
-      )}
+        
+        <button className="erp-btn-primary" onClick={handleOpenAddModal}>
+          + Thêm sản phẩm
+        </button>
+      </div>
 
-      {/* BẢNG DỮ LIỆU */}
-      <div className="table-container">
-        <table className="data-table">
+      <div className="erp-table-container" style={{ overflowX: 'auto', maxWidth: '100%' }}>
+        <table className="erp-table" style={{ minWidth: '1000px' }}>
           <thead>
             <tr>
-              <th>SKU</th>
+              <th>Mã SP</th>
               <th>Tên sản phẩm</th>
               <th>Danh mục</th>
-              <th>Giá vốn</th>
-              <th>Giá bán</th>
-              <th>Tồn an toàn</th>
+              <th>Đơn vị</th>
+              <th style={{textAlign: 'right'}}>Giá nhập</th>
+              <th style={{textAlign: 'right'}}>Giá xuất</th>
+              <th style={{textAlign: 'right'}}>Tồn kho</th>
+              <th style={{textAlign: 'right'}}>Tồn an toàn</th>
+              <th>Ngày tạo</th>
+              <th>Trạng thái</th>
               <th>Thao tác</th>
             </tr>
           </thead>
           <tbody>
-            {products.length === 0 ? <tr><td colSpan="7" style={{textAlign: 'center'}}>Chưa có dữ liệu sản phẩm. Hãy bấm "Thêm Sản Phẩm Mới".</td></tr> : null}
-            {products.map(p => (
-              <tr key={p.id}>
-                <td><strong>{p.sku}</strong></td>
-                <td>{p.name}</td>
-                <td><span className="badge safe">{p.category_name || `CAT-${p.category_id}`}</span></td>
-                <td>{Number(p.cost_price).toLocaleString('vi-VN')} ₫</td>
-                <td>{Number(p.selling_price).toLocaleString('vi-VN')} ₫</td>
-                <td><strong>{p.safety_stock}</strong></td>
+            {products.map((item, index) => (
+              <tr key={index}>
+                <td style={{ fontWeight: '600', color: '#475569' }}>{item.id}</td>
+                <td style={{ color: '#3b82f6', fontWeight: '500' }}>{item.name}</td>
+                <td>{item.category}</td>
+                <td>{item.unit}</td>
+                <td style={{textAlign: 'right'}}>{item.importPrice}</td>
+                <td style={{textAlign: 'right'}}>{item.exportPrice}</td>
+                <td style={{textAlign: 'right', fontWeight: 'bold'}}>{item.stock}</td>
+                <td style={{textAlign: 'right', color: '#64748b'}}>{item.minStock}</td>
+                <td>{item.date}</td>
                 <td>
-                  <button className="btn-action btn-edit">Sửa</button>
-                  <button className="btn-action btn-delete">Xóa</button>
+                  <span className={`status-badge ${item.status === 'Đang bán' ? 'success' : 'danger'}`}>
+                    {item.status}
+                  </span>
+                </td>
+                <td style={{ whiteSpace: 'nowrap' }}>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    {/* NÚT SỬA ĐÃ HOẠT ĐỘNG */}
+                    <button className="erp-action-btn" title="Chỉnh sửa" onClick={() => handleOpenEditModal(item)}>✏️</button>
+                    {/* NÚT XÓA ĐÃ HOẠT ĐỘNG */}
+                    <button className="erp-action-btn delete" title="Xóa" onClick={() => handleDeleteProduct(item.id)}>🗑️</button>
+                  </div>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      {/* POPUP MODAL THÊM / SẢN PHẨM CHUẨN GIAO DIỆN (ĐÃ FIX LỖI TRÀN Ô) */}
+      {isModalOpen && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(15, 23, 42, 0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '20px' }}>
+          <div style={{ background: 'white', padding: '30px', borderRadius: '12px', width: '500px', maxWidth: '100%', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)', maxHeight: '90vh', overflowY: 'auto' }}>
+            <h3 style={{ marginTop: 0, marginBottom: '20px', color: '#1e293b' }}>
+              {editingProduct ? 'Chỉnh sửa thông tin Sản phẩm' : 'Thêm Sản Phẩm Mới (Thị trường)'}
+            </h3>
+            
+            <form onSubmit={handleSaveProduct} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '5px', color: '#475569' }}>Mã sản phẩm (SKU)</label>
+                <input required disabled={editingProduct !== null} className="erp-input" style={{ width: '100%', boxSizing: 'border-box' }} placeholder="VD: SP002" value={formData.id} onChange={e => setFormData({...formData, id: e.target.value})} />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '5px', color: '#475569' }}>Tên sản phẩm</label>
+                <input required className="erp-input" style={{ width: '100%', boxSizing: 'border-box' }} placeholder="Nhập tên sản phẩm..." value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '5px', color: '#475569' }}>Danh mục</label>
+                  <select className="erp-select" style={{ width: '100%', boxSizing: 'border-box' }} value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})}>
+                    <option value="Thực phẩm">Thực phẩm</option>
+                    <option value="Đồ uống">Đồ uống</option>
+                    <option value="Thực phẩm khô">Thực phẩm khô</option>
+                    <option value="Hàng tiêu dùng">Hàng tiêu dùng</option>
+                  </select>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '5px', color: '#475569' }}>Đơn vị tính</label>
+                  <select className="erp-select" style={{ width: '100%', boxSizing: 'border-box' }} value={formData.unit} onChange={e => setFormData({...formData, unit: e.target.value})}>
+                    <option value="Hộp">Hộp</option>
+                    <option value="Chai">Chai</option>
+                    <option value="Thùng">Thùng</option>
+                    <option value="Kg">Kg</option>
+                    <option value="Cái">Cái</option>
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '5px', color: '#475569' }}>Giá nhập (₫)</label>
+                  <input required className="erp-input" style={{ width: '100%', boxSizing: 'border-box' }} placeholder="0" type="number" value={formData.importPrice} onChange={e => setFormData({...formData, importPrice: e.target.value})} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '5px', color: '#475569' }}>Giá xuất (₫)</label>
+                  <input required className="erp-input" style={{ width: '100%', boxSizing: 'border-box' }} placeholder="0" type="number" value={formData.exportPrice} onChange={e => setFormData({...formData, exportPrice: e.target.value})} />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '5px', color: '#475569' }}>Số lượng tồn kho</label>
+                  <input required className="erp-input" style={{ width: '100%', boxSizing: 'border-box' }} placeholder="0" type="number" value={formData.stock} onChange={e => setFormData({...formData, stock: e.target.value})} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '5px', color: '#475569' }}>Mức tồn an toàn</label>
+                  <input required className="erp-input" style={{ width: '100%', boxSizing: 'border-box' }} placeholder="5" type="number" value={formData.minStock} onChange={e => setFormData({...formData, minStock: e.target.value})} />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px', marginTop: '15px' }}>
+                <button type="button" className="erp-btn-primary" style={{ flex: 1, background: '#e2e8f0', color: '#475569', justifyContent: 'center' }} onClick={() => setIsModalOpen(false)}>Hủy</button>
+                <button type="submit" className="erp-btn-primary" style={{ flex: 1, justifyContent: 'center' }}>Lưu Sản Phẩm</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

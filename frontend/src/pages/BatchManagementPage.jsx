@@ -1,192 +1,234 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 
 export default function BatchManagementPage() {
-  const [batches, setBatches] = useState([]);
-  const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [filterStatus, setFilterStatus] = useState('ALL');
+  const [statusFilter, setStatusFilter] = useState('Tất cả trạng thái Date');
+  
+  // State quản lý Modal (Thêm hoặc Sửa lô hàng)
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingBatch, setEditingBatch] = useState(null);
 
+  // Danh sách lô hàng mẫu chuẩn FEFO
+  const [batches, setBatches] = useState([
+    { batchId: 'LOT-001', productName: 'Sữa tươi Vinamilk 1L', importDate: '01/08/2026', expiryDate: '25/09/2026', stock: 15, status: 'Cận Date' },
+    { batchId: 'LOT-002', productName: 'Bánh mì sandwich', importDate: '15/09/2026', expiryDate: '18/09/2026', stock: 0, status: 'Hết hạn' },
+    { batchId: 'LOT-003', productName: 'Gạo thơm Jasmine 5kg', importDate: '10/06/2026', expiryDate: '10/06/2027', stock: 45, status: 'An toàn' },
+  ]);
+
+  // Form state đầy đủ tham khảo thị trường
   const [formData, setFormData] = useState({
-    product_id: '', batch_number: '', import_date: '', expiry_date: '', original_qty: ''
+    batchId: '',
+    productName: '',
+    importDate: new Date().toISOString().split('T')[0],
+    expiryDate: '',
+    stock: ''
   });
 
-  const fetchBatches = () => {
-    fetch('http://127.0.0.1:8000/api/v1/batches', {
-      headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-    })
-    .then(res => res.json())
-    .then(data => { if(Array.isArray(data)) setBatches(data); })
-    .catch(err => console.error(err));
+  // Mở modal thêm mới
+  const handleOpenAddModal = () => {
+    setEditingBatch(null);
+    setFormData({
+      batchId: '',
+      productName: '',
+      importDate: new Date().toISOString().split('T')[0],
+      expiryDate: '',
+      stock: ''
+    });
+    setIsModalOpen(true);
   };
 
-  useEffect(() => { fetchBatches(); }, []);
+  // Mở modal chỉnh sửa
+  const handleOpenEditModal = (batch) => {
+    setEditingBatch(batch);
+    setFormData({
+      batchId: batch.batchId,
+      productName: batch.productName,
+      importDate: batch.importDate.split('/').reverse().join('-'), // Chuyển dd/mm/yyyy thành yyyy-mm-dd cho input date
+      expiryDate: batch.expiryDate.split('/').reverse().join('-'),
+      stock: batch.stock
+    });
+    setIsModalOpen(true);
+  };
 
-  const handleSubmit = async (e) => {
+  // Xử lý Lưu (Thêm hoặc Cập nhật Lô)
+  const handleSaveBatch = (e) => {
     e.preventDefault();
-    try {
-      const res = await fetch('http://127.0.0.1:8000/api/v1/batches', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}` 
-        },
-        body: JSON.stringify({
-          product_id: parseInt(formData.product_id),
-          batch_number: formData.batch_number,
-          import_date: formData.import_date,
-          expiry_date: formData.expiry_date,
-          original_qty: parseInt(formData.original_qty)
-        })
-      });
-      if (!res.ok) throw new Error("Lỗi khi thêm lô hàng");
-      alert("Nhập lô hàng thành công!");
-      setIsModalOpen(false);
-      setFormData({ product_id: '', batch_number: '', import_date: '', expiry_date: '', original_qty: '' });
-      fetchBatches();
-    } catch (error) { alert(error.message); }
-  };
-
-  const calculateDaysLeft = (expiryDate) => {
-    if (!expiryDate) return 0;
-    return Math.ceil((new Date(expiryDate) - new Date()) / (1000 * 60 * 60 * 24));
-  };
-
-  const filteredBatches = batches.filter(b => {
-    const daysLeft = calculateDaysLeft(b.expiry_date);
-    const safeBatchNumber = b.batch_number?.toLowerCase() || '';
-    const safeProductName = b.product_name?.toLowerCase() || '';
-    const searchLower = searchTerm.toLowerCase();
-
-    const matchesSearch = safeBatchNumber.includes(searchLower) || safeProductName.includes(searchLower);
     
-    if (filterStatus === 'EXPIRED') return matchesSearch && daysLeft < 0;
-    if (filterStatus === 'WARNING') return matchesSearch && daysLeft >= 0 && daysLeft <= 7;
-    if (filterStatus === 'SAFE') return matchesSearch && daysLeft > 7;
-    return matchesSearch;
-  });
+    // Format lại ngày tháng hiển thị đẹp mắt (DD/MM/YYYY)
+    const formatDate = (dateStr) => {
+      if (!dateStr) return '';
+      const parts = dateStr.split('-');
+      if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
+      return dateStr;
+    };
 
-  const kpiTotal = batches.length;
-  const kpiWarning = batches.filter(b => {
-    const d = calculateDaysLeft(b.expiry_date);
-    return d >= 0 && d <= 7;
-  }).length;
-  const kpiExpired = batches.filter(b => calculateDaysLeft(b.expiry_date) < 0).length;
+    // Logic tự động đánh giá trạng thái Date (FEFO)
+    const calculateStatus = (expiryStr) => {
+      if (!expiryStr) return 'An toàn';
+      const today = new Date();
+      const expiry = new Date(expiryStr);
+      const diffTime = expiry - today;
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+      if (diffDays < 0) return 'Hết hạn';
+      if (diffDays <= 7) return 'Cận Date';
+      return 'An toàn';
+    };
+
+    const formattedBatch = {
+      batchId: formData.batchId,
+      productName: formData.productName,
+      importDate: formatDate(formData.importDate),
+      expiryDate: formatDate(formData.expiryDate),
+      stock: Number(formData.stock),
+      status: calculateStatus(formData.expiryDate)
+    };
+
+    if (editingBatch) {
+      setBatches(batches.map(b => b.batchId === editingBatch.batchId ? formattedBatch : b));
+    } else {
+      setBatches([formattedBatch, ...batches]);
+    }
+
+    setIsModalOpen(false);
+  };
+
+  // Xử lý Xóa lô hàng
+  const handleDeleteBatch = (batchId) => {
+    if (window.confirm(`Bạn có chắc chắn muốn xóa lô hàng ${batchId} không?`)) {
+      setBatches(batches.filter(b => b.batchId !== batchId));
+    }
+  };
 
   return (
     <div>
-      <div className="content-header">
-        Quản lý Tồn kho & Lô hàng (Inventory Batches)
-        <button className="btn-action btn-add" onClick={() => setIsModalOpen(true)}>+ Nhập Lô Hàng Mới</button>
+      {/* 3 THẺ KPI TỔNG QUAN */}
+      <div className="erp-kpi-row" style={{ marginBottom: '24px' }}>
+        <div className="erp-kpi-card" style={{ borderLeft: '4px solid #3b82f6' }}>
+          <div className="erp-kpi-info">
+            <h4 style={{ color: '#3b82f6', fontSize: '1.6rem', margin: 0 }}>{batches.length}</h4>
+            <p style={{ color: '#64748b', margin: '5px 0 0 0', fontWeight: '600', fontSize: '0.8rem' }}>TỔNG SỐ LÔ HÀNG</p>
+          </div>
+        </div>
+        
+        <div className="erp-kpi-card" style={{ borderLeft: '4px solid #f59e0b' }}>
+          <div className="erp-kpi-info">
+            <h4 style={{ color: '#f59e0b', fontSize: '1.6rem', margin: 0 }}>{batches.filter(b => b.status === 'Cận Date').length}</h4>
+            <p style={{ color: '#64748b', margin: '5px 0 0 0', fontWeight: '600', fontSize: '0.8rem' }}>LÔ HÀNG CẬN DATE (≤ 7 ngày)</p>
+          </div>
+        </div>
+
+        <div className="erp-kpi-card" style={{ borderLeft: '4px solid #ef4444' }}>
+          <div className="erp-kpi-info">
+            <h4 style={{ color: '#ef4444', fontSize: '1.6rem', margin: 0 }}>{batches.filter(b => b.status === 'Hết hạn').length}</h4>
+            <p style={{ color: '#64748b', margin: '5px 0 0 0', fontWeight: '600', fontSize: '0.8rem' }}>LÔ HÀNG ĐÃ HẾT HẠN</p>
+          </div>
+        </div>
       </div>
 
-      <div className="mini-kpi-row">
-        <div className="mini-kpi-card" style={{ borderLeft: '4px solid #3b82f6' }}>
-          <div className="mini-kpi-label">Tổng số lô hàng</div>
-          <div className="mini-kpi-value">{kpiTotal}</div>
+      {/* THANH TÌM KIẾM & NÚT THÊM */}
+      <div className="erp-page-header">
+        <div className="erp-filters-group">
+          <input 
+            type="text" 
+            className="erp-input" 
+            placeholder="🔍 Tìm theo Mã lô hoặc Tên sản phẩm..." 
+            style={{ width: '300px' }}
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+          <select className="erp-select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+            <option>Tất cả trạng thái Date</option>
+            <option>An toàn</option>
+            <option>Cận Date</option>
+            <option>Hết hạn</option>
+          </select>
         </div>
-        <div className="mini-kpi-card" style={{ borderLeft: '4px solid #f59e0b' }}>
-          <div className="mini-kpi-label">Lô hàng cận Date (≤ 7 ngày)</div>
-          <div className="mini-kpi-value" style={{ color: '#d97706' }}>{kpiWarning}</div>
-        </div>
-        <div className="mini-kpi-card" style={{ borderLeft: '4px solid #ef4444' }}>
-          <div className="mini-kpi-label">Lô hàng đã hết hạn</div>
-          <div className="mini-kpi-value" style={{ color: '#dc2626' }}>{kpiExpired}</div>
-        </div>
+        
+        <button className="erp-btn-primary" onClick={handleOpenAddModal}>
+          + Nhập Lô Hàng Mới
+        </button>
       </div>
 
-      <div className="filter-toolbar">
-        <input 
-          type="text" 
-          className="search-box" 
-          style={{ width: '400px' }}
-          placeholder="🔍 Tìm theo Mã lô (Batch) hoặc Tên sản phẩm..." 
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-        />
-        <select className="filter-select" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
-          <option value="ALL">Tất cả trạng thái Date</option>
-          <option value="SAFE">🟢 An toàn (&gt; 7 ngày)</option>
-          <option value="WARNING">🟠 Cận Date (≤ 7 ngày)</option>
-          <option value="EXPIRED">🔴 Đã hết hạn</option>
-        </select>
-      </div>
-
-      <div className="table-container">
-        <table className="data-table">
+      {/* BẢNG LÔ HÀNG */}
+      <div className="erp-table-container" style={{ overflowX: 'auto', maxWidth: '100%' }}>
+        <table className="erp-table" style={{ minWidth: '850px' }}>
           <thead>
             <tr>
               <th>Mã Lô</th>
               <th>Sản phẩm</th>
               <th>Ngày nhập</th>
               <th>Hạn sử dụng</th>
-              <th>Tồn thực tế</th>
+              <th style={{ textAlign: 'right' }}>Tồn thực tế</th>
               <th>Trạng thái Date</th>
               <th>Thao tác</th>
             </tr>
           </thead>
           <tbody>
-            {filteredBatches.length === 0 ? <tr><td colSpan="7" style={{textAlign: 'center', padding: '30px'}}>Không tìm thấy lô hàng nào phù hợp.</td></tr> : null}
-            {filteredBatches.map(b => {
-              const daysLeft = calculateDaysLeft(b.expiry_date);
-              let badge = <span className="badge safe">🟢 Tốt</span>;
-              if (daysLeft < 0) badge = <span className="badge danger">🔴 Hết hạn</span>;
-              else if (daysLeft <= 7) badge = <span className="badge warning">🟠 Còn {daysLeft} ngày</span>;
-
-              return (
-                <tr key={b.id}>
-                  <td><strong>{b.batch_number}</strong></td>
-                  <td>{b.product_name}</td>
-                  <td>{b.import_date}</td>
-                  <td><strong>{b.expiry_date}</strong></td>
-                  <td><strong style={{ color: b.current_qty === 0 ? '#ef4444' : '#10b981', fontSize: '1.1rem' }}>{b.current_qty}</strong> / {b.original_qty}</td>
-                  <td>{badge}</td>
-                  <td>
-                    <button className="btn-action btn-edit">Sửa Qty</button>
-                  </td>
-                </tr>
-              )
-            })}
+            {batches.map((item, index) => (
+              <tr key={index}>
+                <td style={{ fontWeight: '600', color: '#475569' }}>{item.batchId}</td>
+                <td style={{ color: '#3b82f6', fontWeight: '500' }}>{item.productName}</td>
+                <td>{item.importDate}</td>
+                <td style={{ fontWeight: '600', color: item.status === 'Hết hạn' ? '#ef4444' : '#1e293b' }}>{item.expiryDate}</td>
+                <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{item.stock}</td>
+                <td>
+                  <span className={`status-badge ${item.status === 'An toàn' ? 'success' : item.status === 'Cận Date' ? 'warning' : 'danger'}`}>
+                    {item.status}
+                  </span>
+                </td>
+                <td style={{ whiteSpace: 'nowrap' }}>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <button className="erp-action-btn" title="Chỉnh sửa" onClick={() => handleOpenEditModal(item)}>✏️</button>
+                    <button className="erp-action-btn delete" title="Xóa lô" onClick={() => handleDeleteBatch(item.batchId)}>🗑️</button>
+                  </div>
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
 
+      {/* POPUP MODAL ĐẦY ĐỦ THÔNG TIN (ĐÃ FIX LỖI THIẾU NGÀY NHẬP & KÍCH HOẠT NÚT SỬA/XÓA) */}
       {isModalOpen && (
-        <div className="modal-overlay">
-          <div className="modal-content">
-            <div className="modal-header">
-              <h3>📦 Phiếu Nhập Lô Hàng Mới</h3>
-              <button className="btn-close" onClick={() => setIsModalOpen(false)}>×</button>
-            </div>
-            <div className="modal-body">
-              <form onSubmit={handleSubmit}>
-                <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
-                  <div className="form-group">
-                    <label>ID Sản Phẩm (Product ID)</label>
-                    <input type="number" name="product_id" className="form-control" required value={formData.product_id} onChange={(e) => setFormData({...formData, product_id: e.target.value})} />
-                  </div>
-                  <div className="form-group">
-                    <label>Mã Lô (Batch Number)</label>
-                    <input type="text" name="batch_number" className="form-control" placeholder="VD: BATCH-102026" required value={formData.batch_number} onChange={(e) => setFormData({...formData, batch_number: e.target.value})} />
-                  </div>
-                  <div className="form-group">
-                    <label>Ngày Nhập</label>
-                    <input type="date" name="import_date" className="form-control" required value={formData.import_date} onChange={(e) => setFormData({...formData, import_date: e.target.value})} />
-                  </div>
-                  <div className="form-group">
-                    <label>Hạn Sử Dụng (Expiry Date)</label>
-                    <input type="date" name="expiry_date" className="form-control" required value={formData.expiry_date} onChange={(e) => setFormData({...formData, expiry_date: e.target.value})} />
-                  </div>
-                  <div className="form-group" style={{ gridColumn: 'span 2' }}>
-                    <label>Số Lượng Nhập (Original Qty)</label>
-                    <input type="number" name="original_qty" className="form-control" required value={formData.original_qty} onChange={(e) => setFormData({...formData, original_qty: e.target.value})} />
-                  </div>
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(15, 23, 42, 0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '20px' }}>
+          <div style={{ background: 'white', padding: '30px', borderRadius: '12px', width: '450px', maxWidth: '100%', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
+            <h3 style={{ marginTop: 0, marginBottom: '20px', color: '#1e293b' }}>
+              {editingBatch ? 'Chỉnh sửa thông tin Lô hàng' : 'Nhập Lô Hàng Mới (FEFO)'}
+            </h3>
+            
+            <form onSubmit={handleSaveBatch} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '5px', color: '#475569' }}>Mã lô hàng</label>
+                <input required disabled={editingBatch !== null} className="erp-input" style={{ width: '100%', boxSizing: 'border-box' }} placeholder="VD: LOT-004" value={formData.batchId} onChange={e => setFormData({...formData, batchId: e.target.value})} />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '5px', color: '#475569' }}>Tên sản phẩm</label>
+                <input required className="erp-input" style={{ width: '100%', boxSizing: 'border-box' }} placeholder="Nhập tên sản phẩm..." value={formData.productName} onChange={e => setFormData({...formData, productName: e.target.value})} />
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '5px', color: '#475569' }}>Ngày nhập hàng</label>
+                  <input required type="date" className="erp-input" style={{ width: '100%', boxSizing: 'border-box' }} value={formData.importDate} onChange={e => setFormData({...formData, importDate: e.target.value})} />
                 </div>
-                <div className="form-actions" style={{ marginTop: '20px' }}>
-                  <button type="button" className="btn-cancel" onClick={() => setIsModalOpen(false)}>Hủy bỏ</button>
-                  <button type="submit" className="btn-action btn-add">Xác nhận Nhập kho</button>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '5px', color: '#475569' }}>Hạn sử dụng</label>
+                  <input required type="date" className="erp-input" style={{ width: '100%', boxSizing: 'border-box' }} value={formData.expiryDate} onChange={e => setFormData({...formData, expiryDate: e.target.value})} />
                 </div>
-              </form>
-            </div>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '5px', color: '#475569' }}>Số lượng tồn thực tế</label>
+                <input required className="erp-input" style={{ width: '100%', boxSizing: 'border-box' }} placeholder="0" type="number" value={formData.stock} onChange={e => setFormData({...formData, stock: e.target.value})} />
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                <button type="button" className="erp-btn-primary" style={{ flex: 1, background: '#e2e8f0', color: '#475569', justifyContent: 'center' }} onClick={() => setIsModalOpen(false)}>Hủy</button>
+                <button type="submit" className="erp-btn-primary" style={{ flex: 1, justifyContent: 'center' }}>Lưu Lô Hàng</button>
+              </div>
+            </form>
           </div>
         </div>
       )}
