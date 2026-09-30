@@ -168,3 +168,29 @@ def create_batch(batch: BatchCreate, current_user: dict = Depends(get_current_us
             return {"message": "Nhập lô hàng thành công"}
     finally:
         conn.close()
+        # ==========================================
+# API PHÂN HỆ CÀI ĐẶT (SETTINGS)
+# ==========================================
+
+class SettingsUpdate(BaseModel):
+    company_name: str
+    tax_code: str
+    fefo_warning_days: int
+
+@app.get("/api/v1/settings")
+def get_settings(current_user: dict = Depends(get_current_user)):
+    # Trả về cấu hình giả lập (Bạn có thể kết nối MySQL sau)
+    return {
+        "companyName": "RetailSmart ERP",
+        "taxCode": "0123456789",
+        "fefoWarningDays": 7,
+        "currency": "VND"
+    }
+
+@app.put("/api/v1/settings")
+def update_settings(settings: SettingsUpdate, current_user: dict = Depends(get_current_user)):
+    if current_user['role'] != 'Admin':
+        raise HTTPException(status_code=403, detail="Chỉ Admin mới có quyền thay đổi cài đặt hệ thống")
+    
+    # Thực hiện lệnh UPDATE vào MySQL tại đây
+    return {"message": "Đã cập nhật cấu hình hệ thống thành công"}

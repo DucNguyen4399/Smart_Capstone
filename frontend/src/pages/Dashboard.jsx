@@ -3,6 +3,7 @@ import DashboardOverview from './DashboardOverview';
 import ProductListPage from './ProductListPage';
 import BatchManagementPage from './BatchManagementPage';
 import StockImportPage from './StockImportPage';
+import SettingsPage from './SettingsPage';
 
 export default function Dashboard({ role, onLogout }) {
   const [activeMenu, setActiveMenu] = useState('dashboard');
@@ -79,12 +80,8 @@ export default function Dashboard({ role, onLogout }) {
             </div>
           )}
 
-          {activeMenu === 'settings' && (
-            <div className="erp-panel" style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>
-              <h3 style={{ color: '#1e293b' }}>Cài đặt Hệ thống</h3>
-              <p>Quản lý phân quyền, cấu hình thông báo và kết nối cơ sở dữ liệu.</p>
-            </div>
-          )}
+          {/* SỬA LỖI Ở ĐÂY: Sử dụng component SettingsPage thực tế thay vì đoạn text giả */}
+          {activeMenu === 'settings' && <SettingsPage />}
         </div>
       </div>
     </div>

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import Dashboard from './pages/Dashboard';
+
 import './App.css';
 export default function App() {
   const [token, setToken] = useState(localStorage.getItem('token'));
