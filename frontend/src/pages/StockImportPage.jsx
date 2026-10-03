@@ -14,13 +14,18 @@ export default function StockImportPage() {
   };
 
   // Xử lý nút Import hệ thống
-  const handleImportSubmit = () => {
+const handleImportSubmit = () => {
     if (!selectedFile) {
       alert('Vui lòng chọn tệp tin (.csv hoặc .xlsx) trước khi tiến hành Import!');
       return;
     }
+    
+    // Lưu lịch sử import vào localStorage để đồng bộ với Dashboard
+    const existingImports = JSON.parse(localStorage.getItem('import_history')) || [];
+    const newImport = { fileName: selectedFile.name, date: new Date().toLocaleDateString('vi-VN') };
+    localStorage.setItem('import_history', JSON.stringify([newImport, ...existingImports]));
+
     alert(`Thành công! Đang tải lên và xử lý tệp: ${selectedFile.name}`);
-    // Sau này bạn sẽ viết logic gọi API Axios gửi file lên Backend FastAPI tại đây
   };
 
   return (

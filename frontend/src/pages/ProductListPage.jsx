@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 export default function ProductListPage() {
   const [searchTerm, setSearchTerm] = useState('');
@@ -8,11 +8,26 @@ export default function ProductListPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null); // Nếu null là Thêm mới, có dữ liệu là Sửa
 
-  // Danh sách sản phẩm mẫu chuẩn ERP
-  const [products, setProducts] = useState([
-    { id: 'SP001', name: 'Sản phẩm 1', category: 'Đồ uống', unit: 'Chai', importPrice: '10.000 ₫', exportPrice: '13.000 ₫', stock: 6, minStock: 5, date: '09/08/2025', status: 'Đang bán' },
-    { id: 'SP010', name: 'Sản phẩm 10', category: 'Thực phẩm khô', unit: 'Hộp', importPrice: '30.000 ₫', exportPrice: '39.000 ₫', stock: 4, minStock: 10, date: '10/08/2025', status: 'Đang bán' }
-  ]);
+  // 1. Quản lý danh sách sản phẩm (Đọc từ localStorage, nếu chưa có thì dùng danh sách mẫu)
+  const [products, setProducts] = useState(() => {
+    const saved = localStorage.getItem('products_list');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error("Lỗi phân tích dữ liệu sản phẩm từ localStorage", e);
+      }
+    }
+    return [
+      { id: 'SP001', name: 'Sản phẩm 1', category: 'Đồ uống', unit: 'Chai', importPrice: '10.000 ₫', exportPrice: '13.000 ₫', stock: 6, minStock: 5, date: '09/08/2025', status: 'Đang bán' },
+      { id: 'SP010', name: 'Sản phẩm 10', category: 'Thực phẩm khô', unit: 'Hộp', importPrice: '30.000 ₫', exportPrice: '39.000 ₫', stock: 4, minStock: 10, date: '10/08/2025', status: 'Đang bán' }
+    ];
+  });
+
+  // 2. Tự động đồng bộ và lưu vào localStorage mỗi khi danh sách `products` thay đổi
+  useEffect(() => {
+    localStorage.setItem('products_list', JSON.stringify(products));
+  }, [products]);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -60,23 +75,33 @@ export default function ProductListPage() {
       status: 'Đang bán'
     };
 
+    let updatedList;
     if (editingProduct) {
       // Cập nhật sản phẩm cũ
-      setProducts(products.map(p => p.id === editingProduct.id ? formattedProduct : p));
+      updatedList = products.map(p => p.id === editingProduct.id ? formattedProduct : p);
     } else {
       // Thêm sản phẩm mới
-      setProducts([formattedProduct, ...products]);
+      updatedList = [formattedProduct, ...products];
     }
 
+    setProducts(updatedList);
     setIsModalOpen(false);
   };
 
   // Xử lý Xóa sản phẩm
   const handleDeleteProduct = (id) => {
     if (window.confirm(`Bạn có chắc chắn muốn xóa sản phẩm ${id} không?`)) {
-      setProducts(products.filter(p => p.id !== id));
+      const filteredList = products.filter(p => p.id !== id);
+      setProducts(filteredList);
     }
   };
+
+  // Lọc sản phẩm theo tìm kiếm và trạng thái
+  const filteredProducts = products.filter(item => {
+    const matchesSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase()) || item.id.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesStatus = statusFilter === 'Tất cả trạng thái' || item.status === statusFilter;
+    return matchesSearch && matchesStatus;
+  });
 
   return (
     <div>
@@ -119,7 +144,7 @@ export default function ProductListPage() {
             </tr>
           </thead>
           <tbody>
-            {products.map((item, index) => (
+            {filteredProducts.map((item, index) => (
               <tr key={index}>
                 <td style={{ fontWeight: '600', color: '#475569' }}>{item.id}</td>
                 <td style={{ color: '#3b82f6', fontWeight: '500' }}>{item.name}</td>
@@ -137,9 +162,7 @@ export default function ProductListPage() {
                 </td>
                 <td style={{ whiteSpace: 'nowrap' }}>
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    {/* NÚT SỬA ĐÃ HOẠT ĐỘNG */}
                     <button className="erp-action-btn" title="Chỉnh sửa" onClick={() => handleOpenEditModal(item)}>✏️</button>
-                    {/* NÚT XÓA ĐÃ HOẠT ĐỘNG */}
                     <button className="erp-action-btn delete" title="Xóa" onClick={() => handleDeleteProduct(item.id)}>🗑️</button>
                   </div>
                 </td>
@@ -149,7 +172,7 @@ export default function ProductListPage() {
         </table>
       </div>
 
-      {/* POPUP MODAL THÊM / SẢN PHẨM CHUẨN GIAO DIỆN (ĐÃ FIX LỖI TRÀN Ô) */}
+      {/* POPUP MODAL THÊM / SỬA SẢN PHẨM */}
       {isModalOpen && (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(15, 23, 42, 0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '20px' }}>
           <div style={{ background: 'white', padding: '30px', borderRadius: '12px', width: '500px', maxWidth: '100%', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)', maxHeight: '90vh', overflowY: 'auto' }}>

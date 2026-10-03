@@ -1,21 +1,34 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 export default function BatchManagementPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('Tất cả trạng thái Date');
   
-  // State quản lý Modal (Thêm hoặc Sửa lô hàng)
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingBatch, setEditingBatch] = useState(null);
 
-  // Danh sách lô hàng mẫu chuẩn FEFO
-  const [batches, setBatches] = useState([
-    { batchId: 'LOT-001', productName: 'Sữa tươi Vinamilk 1L', importDate: '01/08/2026', expiryDate: '25/09/2026', stock: 15, status: 'Cận Date' },
-    { batchId: 'LOT-002', productName: 'Bánh mì sandwich', importDate: '15/09/2026', expiryDate: '18/09/2026', stock: 0, status: 'Hết hạn' },
-    { batchId: 'LOT-003', productName: 'Gạo thơm Jasmine 5kg', importDate: '10/06/2026', expiryDate: '10/06/2027', stock: 45, status: 'An toàn' },
-  ]);
+  // 1. ĐỌC DỮ LIỆU TỪ localStorage KHI KHỞI TẠO (Nếu chưa có mới dùng dữ liệu mẫu mặc định)
+  const [batches, setBatches] = useState(() => {
+    const savedBatches = localStorage.getItem('batches_list');
+    if (savedBatches) {
+      try {
+        return JSON.parse(savedBatches);
+      } catch (e) {
+        console.error("Lỗi đọc dữ liệu từ localStorage", e);
+      }
+    }
+    return [
+      { batchId: 'LOT-001', productName: 'Sữa tươi Vinamilk 1L', importDate: '01/08/2026', expiryDate: '25/09/2026', stock: 15, status: 'Cận Date' },
+      { batchId: 'LOT-002', productName: 'Bánh mì sandwich', importDate: '15/09/2026', expiryDate: '18/09/2026', stock: 0, status: 'Hết hạn' },
+      { batchId: 'LOT-003', productName: 'Gạo thơm Jasmine 5kg', importDate: '10/06/2026', expiryDate: '10/06/2027', stock: 45, status: 'An toàn' },
+    ];
+  });
 
-  // Form state đầy đủ tham khảo thị trường
+  // 2. TỰ ĐỘNG LƯU VÀO localStorage MỖI KHI MẢNG `batches` CÓ THAY ĐỔI (Thêm, Sửa, Xóa)
+  useEffect(() => {
+    localStorage.setItem('batches_list', JSON.stringify(batches));
+  }, [batches]);
+
   const [formData, setFormData] = useState({
     batchId: '',
     productName: '',
@@ -24,7 +37,6 @@ export default function BatchManagementPage() {
     stock: ''
   });
 
-  // Mở modal thêm mới
   const handleOpenAddModal = () => {
     setEditingBatch(null);
     setFormData({
@@ -37,24 +49,20 @@ export default function BatchManagementPage() {
     setIsModalOpen(true);
   };
 
-  // Mở modal chỉnh sửa
   const handleOpenEditModal = (batch) => {
     setEditingBatch(batch);
     setFormData({
       batchId: batch.batchId,
       productName: batch.productName,
-      importDate: batch.importDate.split('/').reverse().join('-'), // Chuyển dd/mm/yyyy thành yyyy-mm-dd cho input date
+      importDate: batch.importDate.split('/').reverse().join('-'),
       expiryDate: batch.expiryDate.split('/').reverse().join('-'),
       stock: batch.stock
     });
     setIsModalOpen(true);
   };
 
-  // Xử lý Lưu (Thêm hoặc Cập nhật Lô)
   const handleSaveBatch = (e) => {
     e.preventDefault();
-    
-    // Format lại ngày tháng hiển thị đẹp mắt (DD/MM/YYYY)
     const formatDate = (dateStr) => {
       if (!dateStr) return '';
       const parts = dateStr.split('-');
@@ -62,14 +70,11 @@ export default function BatchManagementPage() {
       return dateStr;
     };
 
-    // Logic tự động đánh giá trạng thái Date (FEFO)
     const calculateStatus = (expiryStr) => {
       if (!expiryStr) return 'An toàn';
       const today = new Date();
       const expiry = new Date(expiryStr);
-      const diffTime = expiry - today;
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
+      const diffDays = Math.ceil((expiry - today) / (1000 * 60 * 60 * 24));
       if (diffDays < 0) return 'Hết hạn';
       if (diffDays <= 7) return 'Cận Date';
       return 'An toàn';
@@ -84,21 +89,31 @@ export default function BatchManagementPage() {
       status: calculateStatus(formData.expiryDate)
     };
 
+    let updatedList;
     if (editingBatch) {
-      setBatches(batches.map(b => b.batchId === editingBatch.batchId ? formattedBatch : b));
+      updatedList = batches.map(b => b.batchId === editingBatch.batchId ? formattedBatch : b);
     } else {
-      setBatches([formattedBatch, ...batches]);
+      updatedList = [formattedBatch, ...batches];
     }
 
+    setBatches(updatedList);
     setIsModalOpen(false);
   };
 
-  // Xử lý Xóa lô hàng
   const handleDeleteBatch = (batchId) => {
     if (window.confirm(`Bạn có chắc chắn muốn xóa lô hàng ${batchId} không?`)) {
-      setBatches(batches.filter(b => b.batchId !== batchId));
+      const filteredList = batches.filter(b => b.batchId !== batchId);
+      setBatches(filteredList);
     }
   };
+
+  // Logic lọc dữ liệu
+  const filteredBatches = batches.filter(item => {
+    const matchesSearch = item.productName.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                          item.batchId.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesStatus = statusFilter === 'Tất cả trạng thái Date' || item.status === statusFilter;
+    return matchesSearch && matchesStatus;
+  });
 
   return (
     <div>
@@ -165,31 +180,37 @@ export default function BatchManagementPage() {
             </tr>
           </thead>
           <tbody>
-            {batches.map((item, index) => (
-              <tr key={index}>
-                <td style={{ fontWeight: '600', color: '#475569' }}>{item.batchId}</td>
-                <td style={{ color: '#3b82f6', fontWeight: '500' }}>{item.productName}</td>
-                <td>{item.importDate}</td>
-                <td style={{ fontWeight: '600', color: item.status === 'Hết hạn' ? '#ef4444' : '#1e293b' }}>{item.expiryDate}</td>
-                <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{item.stock}</td>
-                <td>
-                  <span className={`status-badge ${item.status === 'An toàn' ? 'success' : item.status === 'Cận Date' ? 'warning' : 'danger'}`}>
-                    {item.status}
-                  </span>
-                </td>
-                <td style={{ whiteSpace: 'nowrap' }}>
-                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    <button className="erp-action-btn" title="Chỉnh sửa" onClick={() => handleOpenEditModal(item)}>✏️</button>
-                    <button className="erp-action-btn delete" title="Xóa lô" onClick={() => handleDeleteBatch(item.batchId)}>🗑️</button>
-                  </div>
-                </td>
+            {filteredBatches.length > 0 ? (
+              filteredBatches.map((item, index) => (
+                <tr key={index}>
+                  <td style={{ fontWeight: '600', color: '#475569' }}>{item.batchId}</td>
+                  <td style={{ color: '#3b82f6', fontWeight: '500' }}>{item.productName}</td>
+                  <td>{item.importDate}</td>
+                  <td style={{ fontWeight: '600', color: item.status === 'Hết hạn' ? '#ef4444' : '#1e293b' }}>{item.expiryDate}</td>
+                  <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{item.stock}</td>
+                  <td>
+                    <span className={`status-badge ${item.status === 'An toàn' ? 'success' : item.status === 'Cận Date' ? 'warning' : 'danger'}`}>
+                      {item.status}
+                    </span>
+                  </td>
+                  <td style={{ whiteSpace: 'nowrap' }}>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <button className="erp-action-btn" title="Chỉnh sửa" onClick={() => handleOpenEditModal(item)}>✏️</button>
+                      <button className="erp-action-btn delete" title="Xóa lô" onClick={() => handleDeleteBatch(item.batchId)}>🗑️</button>
+                    </div>
+                  </td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td colSpan="7" style={{ textAlign: 'center', padding: '30px', color: '#64748b' }}>Không tìm thấy lô hàng phù hợp.</td>
               </tr>
-            ))}
+            )}
           </tbody>
         </table>
       </div>
 
-      {/* POPUP MODAL ĐẦY ĐỦ THÔNG TIN (ĐÃ FIX LỖI THIẾU NGÀY NHẬP & KÍCH HOẠT NÚT SỬA/XÓA) */}
+      {/* POPUP MODAL */}
       {isModalOpen && (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(15, 23, 42, 0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '20px' }}>
           <div style={{ background: 'white', padding: '30px', borderRadius: '12px', width: '450px', maxWidth: '100%', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
