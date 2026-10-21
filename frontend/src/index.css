@@ -117,3 +117,58 @@ code {
   max-width: none;
   text-align: left;
 }
+/* === QUẢN LÝ HÀNG HÓA: TABS === */
+.inventory-management {
+  width: 100%;
+  min-width: 0;
+}
+
+.inventory-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 16px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--border-light);
+  flex-wrap: wrap;
+}
+
+.inventory-tab {
+  padding: 10px 16px;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text-gray);
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.inventory-tab:hover {
+  background: #eff6ff;
+  color: var(--primary-blue);
+}
+
+.inventory-tab.active {
+  background: var(--primary-blue);
+  border-color: var(--primary-blue);
+  color: #fff;
+  font-weight: 600;
+}
+
+.inventory-tab-content {
+  width: 100%;
+  min-width: 0;
+}
+
+@media (max-width: 600px) {
+  .inventory-tabs {
+    gap: 6px;
+  }
+
+  .inventory-tab {
+    padding: 9px 12px;
+    font-size: 0.85rem;
+  }
+}

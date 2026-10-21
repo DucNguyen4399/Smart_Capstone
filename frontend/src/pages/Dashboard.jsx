@@ -1,91 +1,277 @@
+
 import React, { useState } from 'react';
+import {
+  LayoutDashboard,
+  Package,
+  CalendarClock,
+  ClipboardList,
+  Bot,
+  ShoppingCart,
+  Settings,
+  Boxes,
+  LogOut,
+  Menu,
+  X,
+  ChevronRight,
+} from 'lucide-react';
+
+import InventoryManagementPage from './InventoryManagementPage';
 import DashboardOverview from './DashboardOverview';
-import ProductListPage from './ProductListPage';
-import BatchManagementPage from './BatchManagementPage';
-import StockImportPage from './StockImportPage';
+import SalesHistoryPage from './SalesHistoryPage';
+import RecommendationPage from './RecommendationPage';
+import './Dashboard.css';
+
+const menuItems = [
+  {
+    id: 'dashboard',
+    title: 'Dashboard',
+    icon: LayoutDashboard,
+  },
+  {
+    id: 'inventory',
+    title: 'Sản phẩm',
+    icon: Package,
+  },
+  {
+    id: 'sales_history',
+    title: 'Lịch sử bán hàng',
+    icon: ClipboardList,
+  },
+  {
+    id: 'ai_assistant',
+    title: 'Trợ lý AI',
+    icon: Bot,
+  },
+  {
+    id: 'recommendation',
+    title: 'Đề xuất nhập hàng',
+    icon: ShoppingCart,
+  },
+  {
+    id: 'settings',
+    title: 'Cài đặt hệ thống',
+    icon: Settings,
+  },
+];
+
+const menuTitles = {
+  dashboard: 'Dashboard Tổng quan',
+  inventory: 'Quản lý sản phẩm',
+  import_stock: 'Quản lý lô hàng & Hạn dùng',
+  sales_history: 'Lịch sử bán hàng',
+  ai_assistant: 'Trợ lý AI Phân tích & Dự báo Kho',
+  recommendation: 'Đề xuất nhập hàng',
+  settings: 'Cài đặt Hệ thống',
+};
 
 export default function Dashboard({ role, onLogout }) {
   const [activeMenu, setActiveMenu] = useState('dashboard');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const menuTitles = {
-    dashboard: 'Dashboard Tổng quan',
-    products: 'Quản lý Danh mục Sản phẩm',
-    batches: 'Kiểm soát Lô hàng & Hạn sử dụng (FEFO)',
-    import_stock: 'Import Lịch sử Sales & Nhập kho',
-    ai_assistant: 'Trợ lý AI Phân tích & Dự báo Kho',
-    settings: 'Cài đặt Hệ thống'
+  const username =
+    localStorage.getItem('username') || role || 'admin';
+
+  const handleMenuClick = (menuId) => {
+    setActiveMenu(menuId);
+    setSidebarOpen(false);
   };
 
   return (
     <div className="app-layout">
-      {/* SIDEBAR TỐI GIẢN - ĐÃ XÓA MỤC TỒN KHO */}
-      <div className="sidebar" style={{ backgroundColor: '#ffffff', borderRight: '1px solid #e2e8f0', width: '250px' }}>
-        <div className="sidebar-header" style={{ color: '#1e293b', fontWeight: 'bold', padding: '24px 20px', borderBottom: '1px solid #e2e8f0', fontSize: '1.05rem' }}>
-          Nhập Xuất Tồn
-        </div>
-        
-        <ul className="sidebar-menu" style={{ listStyle: 'none', padding: '15px 12px', margin: 0, display: 'flex', flexDirection: 'column', gap: '4px' }}>
-          <li className={activeMenu === 'dashboard' ? 'active' : ''} onClick={() => setActiveMenu('dashboard')}>
-            Dashboard
-          </li>
-          <li className={activeMenu === 'products' ? 'active' : ''} onClick={() => setActiveMenu('products')}>
-            Sản phẩm
-          </li>
-          <li className={activeMenu === 'batches' ? 'active' : ''} onClick={() => setActiveMenu('batches')}>
-            Lô hàng & Hạn sử dụng
-          </li>
-          <li className={activeMenu === 'import_stock' ? 'active' : ''} onClick={() => setActiveMenu('import_stock')}>
-            Nhập kho
-          </li>
-          <li className={activeMenu === 'ai_assistant' ? 'active' : ''} onClick={() => setActiveMenu('ai_assistant')}>
-            Trợ lý AI
-          </li>
-          <li className={activeMenu === 'settings' ? 'active' : ''} onClick={() => setActiveMenu('settings')}>
-            Cài đặt
-          </li>
-        </ul>
-      </div>
+      {sidebarOpen && (
+        <button
+          type="button"
+          className="sidebar-overlay"
+          aria-label="Đóng menu"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
 
-      {/* MAIN WRAPPER */}
-      <div className="main-wrapper" style={{ backgroundColor: '#f8f9fa' }}>
-        <div className="top-navbar" style={{ backgroundColor: '#ffffff', borderBottom: '1px solid #e2e8f0' }}>
-          <div className="top-navbar-title" style={{ color: '#1e293b' }}>
-            {menuTitles[activeMenu]}
+      <aside
+        className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}
+      >
+        <div className="sidebar-header">
+          <div className="brand-logo">
+            <Boxes size={23} strokeWidth={2.3} />
           </div>
-          <div className="user-profile" style={{ color: '#475569', display: 'flex', alignItems: 'center', gap: '15px' }}>
-            <span>Xin chào, {localStorage.getItem('username') || role || 'admin'}</span>
-            <button onClick={onLogout} style={{ border: 'none', background: '#fee2e2', color: '#dc2626', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '0.85rem' }}>
-              Đăng xuất
+
+          <div className="brand-info">
+            <span className="brand-name">Nhập Xuất Tồn</span>
+          </div>
+
+          <button
+            type="button"
+            className="sidebar-close"
+            onClick={() => setSidebarOpen(false)}
+            aria-label="Đóng menu"
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="sidebar-section-label">
+          MENU CHÍNH
+        </div>
+
+        <nav className="sidebar-menu">
+          {menuItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = activeMenu === item.id;
+
+            return (
+              <button
+                type="button"
+                key={item.id}
+                className={`sidebar-item ${
+                  isActive ? 'active' : ''
+                }`}
+                onClick={() => handleMenuClick(item.id)}
+                aria-current={isActive ? 'page' : undefined}
+              >
+                <span className="sidebar-item-icon">
+                  <Icon size={19} strokeWidth={1.9} />
+                </span>
+
+                <span className="sidebar-item-title">
+                  {item.title}
+                </span>
+
+                {isActive && (
+                  <ChevronRight
+                    className="sidebar-item-arrow"
+                    size={16}
+                  />
+                )}
+              </button>
+            );
+          })}
+        </nav>
+
+        <div className="sidebar-footer">
+          <div className="sidebar-status-dot" />
+          <span>Hệ thống đang hoạt động</span>
+        </div>
+      </aside>
+
+      <div className="main-wrapper">
+        <header className="top-navbar">
+          <div className="navbar-heading">
+            <button
+              type="button"
+              className="mobile-menu-toggle"
+              onClick={() => setSidebarOpen(true)}
+              aria-label="Mở menu"
+            >
+              <Menu size={22} />
+            </button>
+
+            <div className="navbar-page-info">
+              <span className="navbar-eyebrow">
+                NHẬP XUẤT TỒN / QUẢN LÝ
+              </span>
+              <h1 className="top-navbar-title">
+                {menuTitles[activeMenu]}
+              </h1>
+            </div>
+          </div>
+
+          <div className="user-profile">
+            <div className="user-avatar">
+              {String(username).charAt(0).toUpperCase()}
+            </div>
+
+            <div className="user-info">
+              <span className="user-name">{username}</span>
+              <span className="user-role">
+                {role || 'Quản trị viên'}
+              </span>
+            </div>
+
+            <button
+              type="button"
+              className="logout-button"
+              onClick={onLogout}
+              title="Đăng xuất"
+              aria-label="Đăng xuất"
+            >
+              <LogOut size={18} />
+              <span>Đăng xuất</span>
             </button>
           </div>
-        </div>
+        </header>
 
-        <div className="main-content">
-          {activeMenu === 'dashboard' && <DashboardOverview />}
-          {activeMenu === 'products' && <ProductListPage />}
-          {activeMenu === 'batches' && <BatchManagementPage />}
-          {activeMenu === 'import_stock' && <StockImportPage />}
+        <main className="main-content">
+          {activeMenu === 'dashboard' && (
+            <DashboardOverview />
+          )}
+
+          {activeMenu === 'inventory' && (
+            <InventoryManagementPage />
+          )}
+
+          {activeMenu === 'sales_history' && (
+            <SalesHistoryPage />
+          )}
+
+          {activeMenu === 'recommendation' && (
+            <RecommendationPage />
+          )}
+
+          {activeMenu === 'import_stock' && (
+            <div className="dashboard-placeholder">
+              <div className="placeholder-icon">
+                <CalendarClock size={28} />
+              </div>
+              <h2>Quản lý lô hàng & Hạn dùng</h2>
+              <p>
+                Chức năng quản lý lô hàng và hạn sử dụng sẽ hiển thị
+                tại đây khi được kết nối với trang tương ứng.
+              </p>
+            </div>
+          )}
 
           {activeMenu === 'ai_assistant' && (
-            <div className="erp-panel" style={{ padding: '30px' }}>
-              <div className="erp-panel-title">Trợ lý AI Phân tích Đa chiều & Dự báo Tồn kho</div>
-              <p style={{ color: '#64748b', marginBottom: '20px', fontSize: '0.9rem' }}>
-                Hệ thống đánh giá chuỗi thời gian (Time-series) để đề xuất kế hoạch nhập hàng hoặc kích hoạt chương trình xả hàng tồn đọng.
-              </p>
-              <div style={{ display: 'flex', gap: '12px' }}>
-                <input className="erp-input" style={{ flex: 1 }} placeholder="Nhập tên mặt hàng cần phân tích..." />
-                <button className="erp-btn-primary">Chạy Mô hình AI</button>
+            <div className="erp-panel ai-assistant-panel">
+              <div className="ai-panel-heading">
+                <div className="ai-panel-icon">
+                  <Bot size={24} />
+                </div>
+                <div>
+                  <h2>Trợ lý AI</h2>
+                  <p>
+                    Phân tích dữ liệu và hỗ trợ dự báo tồn kho.
+                  </p>
+                </div>
+              </div>
+
+              <div className="ai-input-row">
+                <input
+                  className="erp-input"
+                  placeholder="Nhập tên mặt hàng cần phân tích..."
+                />
+                <button
+                  type="button"
+                  className="erp-btn-primary"
+                >
+                  Chạy mô hình AI
+                </button>
               </div>
             </div>
           )}
 
           {activeMenu === 'settings' && (
-            <div className="erp-panel" style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>
-              <h3 style={{ color: '#1e293b' }}>Cài đặt Hệ thống</h3>
-              <p>Quản lý phân quyền, cấu hình thông báo và kết nối cơ sở dữ liệu.</p>
+            <div className="dashboard-placeholder">
+              <div className="placeholder-icon">
+                <Settings size={28} />
+              </div>
+              <h2>Cài đặt hệ thống</h2>
+              <p>
+                Quản lý phân quyền, cấu hình thông báo và kết nối
+                cơ sở dữ liệu.
+              </p>
             </div>
           )}
-        </div>
+        </main>
       </div>
     </div>
   );
