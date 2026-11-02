@@ -1,12 +1,26 @@
-from datetime import datetime, timedelta
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
+from typing import Set, Optional
+from datetime import datetime, timedelta, date
+from decimal import Decimal
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    HTTPException,
+    UploadFile,
+    status,
+)
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import jwt
 import pandas as pd
 import pymysql
 import io
+
+from database_mongo import (
+    mongo_products,
+    mongo_categories,
+)
 
 app = FastAPI(title="RetailSmart API - C1SE.17", version="1.0")
 
@@ -37,6 +51,568 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
         return payload
     except jwt.PyJWTError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token không hợp lệ hoặc hết hạn")
+def require_roles(*allowed_roles: str):
+    def role_checker(
+        current_user: dict = Depends(get_current_user)
+    ):
+        user_role = current_user.get("role")
+
+        if user_role not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Bạn không có quyền thực hiện thao tác này"
+            )
+
+        return current_user
+
+    return role_checker
+class ReceiptDetailInput(BaseModel):
+    product_id: int
+    batch_number: str
+    import_date: date
+    expiry_date: date
+    quantity: int = Field(gt=0)
+    unit_cost: Optional[Decimal] = None
+
+
+class ReceiptCreate(BaseModel):
+    receipt_code: str
+    supplier_name: Optional[str] = None
+    note: Optional[str] = None
+    details: list[ReceiptDetailInput] = Field(min_length=1)
+
+
+class IssueDetailInput(BaseModel):
+    batch_id: int
+    quantity: int = Field(gt=0)
+
+
+class IssueCreate(BaseModel):
+    issue_code: str
+    issue_date: Optional[datetime] = None
+    recipient: Optional[str] = None
+    reason: Optional[str] = None
+    note: Optional[str] = None
+    details: list[IssueDetailInput] = Field(min_length=1)
+
+
+# ---------- CREATE RECEIPT DRAFT ----------
+
+@app.post("/api/v1/receipts")
+def create_receipt(
+    data: ReceiptCreate,
+    current_user: dict = Depends(
+        require_roles("Admin", "Store Manager")
+    )
+):
+    conn = get_db()
+
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO goods_receipts
+                    (receipt_code, supplier_name, note, created_by)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (
+                    data.receipt_code,
+                    data.supplier_name,
+                    data.note,
+                    int(current_user["sub"])
+                )
+            )
+
+            receipt_id = cursor.lastrowid
+
+            for item in data.details:
+                if item.expiry_date < item.import_date:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Hạn sử dụng không được trước ngày nhập"
+                    )
+
+                cursor.execute(
+                    "SELECT id FROM products WHERE id = %s",
+                    (item.product_id,)
+                )
+                if not cursor.fetchone():
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Không tìm thấy sản phẩm ID {item.product_id}"
+                    )
+
+                cursor.execute(
+                    """
+                    INSERT INTO goods_receipt_details
+                    (
+                        receipt_id, product_id, batch_number,
+                        import_date, expiry_date, quantity,unit_cost
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        receipt_id,
+                        item.product_id,
+                        item.batch_number,
+                        item.import_date,
+                        item.expiry_date,
+                        item.quantity,
+                        item.unit_cost,
+                    )
+                )
+
+        conn.commit()
+        return {
+            "message": "Tạo phiếu nhập nháp thành công",
+            "receipt_id": receipt_id,
+            "status": "DRAFT"
+        }
+
+    except HTTPException:
+        conn.rollback()
+        raise
+    except pymysql.err.IntegrityError as exc:
+        conn.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Mã phiếu nhập đã tồn tại hoặc dữ liệu vi phạm ràng buộc"
+        ) from exc
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Lỗi tạo phiếu nhập: {str(exc)}"
+        ) from exc
+    finally:
+        conn.close()
+
+@app.post("/api/v1/receipts/{receipt_id}/confirm")
+def confirm_receipt(
+    receipt_id: int,
+    current_user: dict = Depends(
+        require_roles("Admin", "Store Manager")
+    )
+):
+    conn = get_db()
+
+    try:
+        with conn.cursor() as cursor:
+            # Khóa phiếu để ngăn xác nhận lặp đồng thời.
+            cursor.execute(
+                """
+                SELECT *
+                FROM goods_receipts
+                WHERE receipt_id = %s
+                FOR UPDATE
+                """,
+                (receipt_id,)
+            )
+            receipt = cursor.fetchone()
+
+            if not receipt:
+                raise HTTPException(404, "Không tìm thấy phiếu nhập")
+
+            if receipt["status"] != "DRAFT":
+                raise HTTPException(
+                    409,
+                    "Chỉ được xác nhận phiếu đang ở trạng thái DRAFT"
+                )
+
+            cursor.execute(
+                """
+                SELECT *
+                FROM goods_receipt_details
+                WHERE receipt_id = %s
+                """,
+                (receipt_id,)
+            )
+            details = cursor.fetchall()
+
+            if not details:
+                raise HTTPException(400, "Phiếu nhập chưa có chi tiết")
+
+            for item in details:
+                cursor.execute(
+                    """
+                    SELECT id, original_qty, current_qty
+                    FROM batches
+                    WHERE product_id = %s AND batch_number = %s
+                    FOR UPDATE
+                    """,
+                    (item["product_id"], item["batch_number"])
+                )
+                batch = cursor.fetchone()
+
+                if batch:
+                    # Chỉ cộng tồn khi xác nhận phiếu.
+                    cursor.execute(
+                        """
+                        UPDATE batches
+                        SET original_qty = original_qty + %s,
+                            current_qty = current_qty + %s,
+                            import_date = %s,
+                            expiry_date = %s
+                        WHERE id = %s
+                        """,
+                        (
+                            item["quantity"],
+                            item["quantity"],
+                            item["import_date"],
+                            item["expiry_date"],
+                            batch["id"]
+                        )
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        INSERT INTO batches
+                        (
+                            product_id, batch_number, import_date,
+                            expiry_date, original_qty, current_qty,
+                            risk_level
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            item["product_id"],
+                            item["batch_number"],
+                            item["import_date"],
+                            item["expiry_date"],
+                            item["quantity"],
+                            item["quantity"],
+                            "Safe"
+                        )
+                    )
+
+            cursor.execute(
+                """
+                UPDATE goods_receipts
+                SET status = 'CONFIRMED',
+                    confirmed_by = %s,
+                    confirmed_at = NOW()
+                WHERE receipt_id = %s
+                """,
+                (int(current_user["sub"]), receipt_id)
+            )
+
+        conn.commit()
+        return {"message": "Xác nhận phiếu nhập thành công"}
+
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Lỗi xác nhận phiếu nhập: {str(exc)}"
+        ) from exc
+    finally:
+        conn.close()
+
+@app.get("/api/v1/receipts")
+def get_receipts(
+    current_user: dict = Depends(get_current_user)
+):
+    conn = get_db()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    receipt_id, receipt_code, receipt_date,
+                    supplier_name, note, status,
+                    created_by, confirmed_by, confirmed_at
+                FROM goods_receipts
+                ORDER BY receipt_id DESC
+                """
+            )
+            return cursor.fetchall()
+    finally:
+        conn.close()
+
+
+@app.get("/api/v1/receipts/{receipt_id}")
+def get_receipt_detail(
+    receipt_id: int,
+    current_user: dict = Depends(get_current_user)
+):
+    conn = get_db()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT *
+                FROM goods_receipts
+                WHERE receipt_id = %s
+                """,
+                (receipt_id,)
+            )
+            receipt = cursor.fetchone()
+
+            if not receipt:
+                raise HTTPException(404, "Không tìm thấy phiếu nhập")
+
+            cursor.execute(
+                """
+                SELECT
+                    d.*, p.sku, p.name AS product_name
+                FROM goods_receipt_details d
+                JOIN products p ON p.id = d.product_id
+                WHERE d.receipt_id = %s
+                """,
+                (receipt_id,)
+            )
+            receipt["details"] = cursor.fetchall()
+            return receipt
+    finally:
+        conn.close()
+
+@app.post("/api/v1/issues")
+def create_issue(
+    data: IssueCreate,
+    current_user: dict = Depends(
+        require_roles("Admin", "Store Manager")
+    )
+):
+    conn = get_db()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO goods_issues
+                    (issue_code, issue_date, recipient, reason, note, created_by)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    data.issue_code,
+                    data.issue_date,
+                    data.recipient,
+                    data.reason,
+                    data.note,
+                    int(current_user["sub"])
+                )
+            )
+            issue_id = cursor.lastrowid
+
+            for item in data.details:
+                cursor.execute(
+                    """
+                    INSERT INTO goods_issue_details
+                        (issue_id, batch_id, quantity)
+                    VALUES (%s, %s, %s)
+                    """,
+                    (issue_id, item.batch_id, item.quantity)
+                )
+
+        conn.commit()
+        return {
+            "message": "Tạo phiếu xuất nháp thành công",
+            "issue_id": issue_id,
+            "status": "DRAFT"
+        }
+
+    except HTTPException:
+        conn.rollback()
+        raise
+    except pymysql.err.IntegrityError as exc:
+        conn.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Mã phiếu xuất đã tồn tại hoặc dữ liệu không hợp lệ"
+        ) from exc
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Lỗi tạo phiếu xuất: {str(exc)}"
+        ) from exc
+    finally:
+        conn.close()
+
+@app.post("/api/v1/issues/{issue_id}/confirm")
+def confirm_issue(
+    issue_id: int,
+    current_user: dict = Depends(
+        require_roles("Admin", "Store Manager")
+    )
+):
+    conn = get_db()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT DATABASE() AS db_name")
+            print("DEBUG DATABASE:", cursor.fetchone())
+            cursor.execute(
+                """
+                SELECT *
+                FROM goods_issues
+                WHERE issue_id = %s
+                FOR UPDATE
+                """,
+                (issue_id,)
+            )
+            issue = cursor.fetchone()
+
+            if not issue:
+                raise HTTPException(404, "Không tìm thấy phiếu xuất")
+
+            if issue["status"] != "DRAFT":
+                raise HTTPException(
+                    409,
+                    "Chỉ được xác nhận phiếu đang ở trạng thái DRAFT"
+                )
+
+            cursor.execute(
+                """
+                SELECT batch_id, SUM(quantity) AS total_qty
+                FROM goods_issue_details
+                WHERE issue_id = %s
+                GROUP BY batch_id
+                ORDER BY batch_id
+                """,
+                (issue_id,)
+            )
+            details = cursor.fetchall()
+
+            if not details:
+                raise HTTPException(400, "Phiếu xuất chưa có chi tiết")
+
+            for item in details:
+                cursor.execute(
+                    """
+                    SELECT id, current_qty, expiry_date
+                    FROM batches
+                    WHERE id = %s
+                    FOR UPDATE
+                    """,
+                    (item["batch_id"],)
+                )
+                batch = cursor.fetchone()
+
+                if not batch:
+                    raise HTTPException(
+                        404,
+                        f"Không tìm thấy lô ID {item['batch_id']}"
+                    )
+
+                if batch["expiry_date"] < date.today():
+                    raise HTTPException(
+                        400,
+                        f"Lô ID {item['batch_id']} đã hết hạn"
+                    )
+
+                if batch["current_qty"] < item["total_qty"]:
+                    raise HTTPException(
+                        400,
+                        f"Lô ID {item['batch_id']} không đủ tồn kho"
+                    )
+
+                cursor.execute(
+                    """
+                    UPDATE batches
+                    SET current_qty = current_qty - %s
+                    WHERE id = %s AND current_qty >= %s
+                    """,
+                    (
+                        item["total_qty"],
+                        item["batch_id"],
+                        item["total_qty"]
+                    )
+                )
+
+                if cursor.rowcount != 1:
+                    raise HTTPException(
+                        409,
+                        "Tồn kho thay đổi; hãy tải lại dữ liệu và thử lại"
+                    )
+
+            cursor.execute(
+                """
+                UPDATE goods_issues
+                SET status = 'CONFIRMED',
+                    confirmed_by = %s,
+                    confirmed_at = NOW()
+                WHERE issue_id = %s
+                """,
+                (int(current_user["sub"]), issue_id)
+            )
+
+        conn.commit()
+        return {"message": "Xác nhận phiếu xuất thành công"}
+
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Lỗi xác nhận phiếu xuất: {str(exc)}"
+        ) from exc
+    finally:
+        conn.close()
+
+@app.get("/api/v1/issues")
+def get_issues(
+    current_user: dict = Depends(get_current_user)
+):
+    conn = get_db()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    issue_id, issue_code, issue_date,
+                    recipient, reason, note, status,
+                    created_by, confirmed_by, confirmed_at
+                FROM goods_issues
+                ORDER BY issue_id DESC
+                """
+            )
+            return cursor.fetchall()
+    finally:
+        conn.close()
+
+
+@app.get("/api/v1/issues/{issue_id}")
+def get_issue_detail(
+    issue_id: int,
+    current_user: dict = Depends(get_current_user)
+):
+    conn = get_db()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT *
+                FROM goods_issues
+                WHERE issue_id = %s
+                """,
+                (issue_id,)
+            )
+            issue = cursor.fetchone()
+
+            if not issue:
+                raise HTTPException(404, "Không tìm thấy phiếu xuất")
+
+            cursor.execute(
+                """
+                SELECT
+                    d.detail_id, d.batch_id, d.quantity,
+                    b.batch_number, b.expiry_date,
+                    p.name AS product_name, p.sku
+                FROM goods_issue_details d
+                JOIN batches b ON b.id = d.batch_id
+                JOIN products p ON p.id = b.product_id
+                WHERE d.issue_id = %s
+                """,
+                (issue_id,)
+            )
+            issue["details"] = cursor.fetchall()
+            return issue
+    finally:
+        conn.close()
 
 @app.post("/api/v1/auth/login")
 def login(form_data: OAuth2PasswordRequestForm = Depends()):
@@ -92,9 +668,12 @@ def get_products(current_user: dict = Depends(get_current_user)):
         conn.close()
 
 @app.post("/api/v1/products")
-def create_product(product: ProductCreate, current_user: dict = Depends(get_current_user)):
-    if current_user['role'] not in ['Admin', 'Store Manager']:
-        raise HTTPException(status_code=403, detail="Không có quyền thực hiện thao tác này")
+def create_product(
+    product: ProductCreate,
+    current_user: dict = Depends(
+        require_roles("Admin", "Store Manager")
+    )
+):
     conn = get_db()
     try:
         with conn.cursor() as cursor:
@@ -271,14 +850,10 @@ def get_sales(current_user: dict = Depends(get_current_user)):
 def update_product(
     product_id: int,
     product: ProductCreate,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(
+        require_roles("Admin", "Store Manager")
+    )
 ):
-    if current_user['role'] not in ['Admin', 'Store Manager']:
-        raise HTTPException(
-            status_code=403,
-            detail="Không có quyền thực hiện thao tác này"
-        )
-
     conn = get_db()
 
     try:
@@ -353,14 +928,10 @@ def update_product(
 @app.delete("/api/v1/products/{product_id}")
 def delete_product(
     product_id: int,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(
+        require_roles("Admin", "Store Manager")
+    )
 ):
-    if current_user['role'] not in ['Admin', 'Store Manager']:
-        raise HTTPException(
-            status_code=403,
-            detail="Không có quyền xóa sản phẩm"
-        )
-
     conn = get_db()
 
     try:
@@ -411,7 +982,6 @@ class BatchCreate(BaseModel):
     import_date: str
     expiry_date: str
     original_qty: int
-    warehouse_location: str | None = None
 
 
 @app.get("/api/v1/batches")
@@ -419,20 +989,25 @@ def get_batches(current_user: dict = Depends(get_current_user)):
     conn = get_db()
     try:
         with conn.cursor() as cursor:
+            
+            
             sql = """
-                SELECT b.id,
+                SELECT
+                    b.id,
                     b.product_id,
                     b.batch_number,
                     b.import_date,
                     b.expiry_date,
                     b.original_qty,
                     b.current_qty,
-                    b.warehouse_location,
-                    p.name AS product_name
+                    p.name AS product_name,
+                    p.sku AS product_sku
                 FROM batches b
                 JOIN products p ON b.product_id = p.id
                 ORDER BY b.expiry_date ASC
             """
+
+
             cursor.execute(sql)
             return cursor.fetchall()
     finally:
@@ -445,11 +1020,11 @@ def create_batch(batch: BatchCreate, current_user: dict = Depends(get_current_us
     conn = get_db()
     try:
         with conn.cursor() as cursor:
-            sql = """INSERT INTO batches (product_id, batch_number, import_date, expiry_date, original_qty, current_qty, risk_level,warehouse_location)
-                     VALUES (%s, %s, %s, %s, %s, %s, %s,%s)"""
+            sql = """INSERT INTO batches (product_id, batch_number, import_date, expiry_date, original_qty, current_qty, risk_level)
+                     VALUES (%s, %s, %s, %s, %s, %s, %s)"""
             cursor.execute(sql, (
                 batch.product_id, batch.batch_number, batch.import_date, 
-                batch.expiry_date, batch.original_qty, batch.original_qty, 'Safe',batch.warehouse_location
+                batch.expiry_date, batch.original_qty, batch.original_qty, 'Safe'
             ))
             conn.commit()
             return {"message": "Nhập lô hàng thành công"}
@@ -459,7 +1034,6 @@ class BatchUpdate(BaseModel):
     batch_number: str
     expiry_date: str
     current_qty: int
-    warehouse_location: str | None = None
 
 
 @app.put("/api/v1/batches/{batch_id}")
@@ -496,8 +1070,7 @@ def update_batch(
                 UPDATE batches
                 SET batch_number = %s,
                     expiry_date = %s,
-                    current_qty = %s,
-                    warehouse_location = %s
+                    current_qty = %s
                 WHERE id = %s
             """
 
@@ -507,7 +1080,6 @@ def update_batch(
                     batch.batch_number,
                     batch.expiry_date,
                     batch.current_qty,
-                    batch.warehouse_location,
                     batch_id
                 )
             )
@@ -561,3 +1133,44 @@ def delete_batch(
 
     finally:
         conn.close()
+
+@app.get("/api/v1/dataset/products")
+def get_dataset_products(limit: int = 50, skip: int = 0):
+    if limit < 1 or limit > 200:
+        raise HTTPException(
+            status_code=400,
+            detail="limit phải nằm trong khoảng 1 đến 200",
+        )
+
+    if skip < 0:
+        raise HTTPException(
+            status_code=400,
+            detail="skip không được âm",
+        )
+
+    try:
+        cursor = (
+            mongo_products
+            .find({}, {"_id": 0})
+            .skip(skip)
+            .limit(limit)
+        )
+        return list(cursor)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Không thể đọc sản phẩm từ MongoDB",
+        ) from exc
+
+
+@app.get("/api/v1/dataset/categories")
+def get_dataset_categories():
+    try:
+        return list(
+            mongo_categories.find({}, {"_id": 0})
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Không thể đọc danh mục từ MongoDB",
+        ) from exc
