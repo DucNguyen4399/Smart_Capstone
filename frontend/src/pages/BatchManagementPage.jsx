@@ -6,7 +6,6 @@ export default function BatchManagementPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('Tất cả trạng thái Date');
   
-  // State quản lý Modal (Thêm hoặc Sửa lô hàng)
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingBatch, setEditingBatch] = useState(null);
 
@@ -15,7 +14,11 @@ export default function BatchManagementPage() {
 
   const [products, setProducts] = useState([]);
 
-  // Form state đầy đủ tham khảo thị trường
+  // 2. TỰ ĐỘNG LƯU VÀO localStorage MỖI KHI MẢNG `batches` CÓ THAY ĐỔI (Thêm, Sửa, Xóa)
+  useEffect(() => {
+    localStorage.setItem('batches_list', JSON.stringify(batches));
+  }, [batches]);
+
   const [formData, setFormData] = useState({
     batchId: '',
     productId: '',
@@ -133,7 +136,6 @@ export default function BatchManagementPage() {
     setIsModalOpen(true);
   };
 
-  // Mở modal chỉnh sửa
   const handleOpenEditModal = (batch) => {
     setEditingBatch(batch);
     setFormData({
