@@ -26,9 +26,8 @@ export default function BatchManagementPage() {
     importDate: new Date().toISOString().split('T')[0],
     expiryDate: '',
     stock: '',
-    warehouseLocation: 'Kho lạnh A',
+    warehouseLocation: '',
   });
-  const [warehouseFilter, setWarehouseFilter] = useState('all');
   useEffect(() => {
     fetchBatches();
     fetchProducts();
@@ -55,11 +54,7 @@ export default function BatchManagementPage() {
       statusFilter === 'Tất cả trạng thái Date' ||
       item.status === statusFilter;
 
-    const matchesWarehouse =
-      warehouseFilter === 'all' ||
-      item.location === warehouseFilter;
-
-    return matchesSearch && matchesStatus && matchesWarehouse;
+    return matchesSearch && matchesStatus;
   });
   const fetchBatches = async () => {
     try {
@@ -85,7 +80,6 @@ export default function BatchManagementPage() {
         importDate: batch.import_date,
         expiryDate: batch.expiry_date,
         stock: batch.current_qty,
-        location: batch.warehouse_location || '',
         status: calculateStatus(batch.expiry_date),
       }));
       console.log('Dữ liệu batch từ backend:', data);
@@ -130,7 +124,7 @@ export default function BatchManagementPage() {
       importDate: new Date().toISOString().split('T')[0],
       expiryDate: '',
       stock: '',
-      warehouseLocation: 'Kho lạnh A'
+      warehouseLocation: ''
     });
 
     setIsModalOpen(true);
@@ -141,10 +135,10 @@ export default function BatchManagementPage() {
     setFormData({
       batchId: batch.batchId,
       productId: String(batch.productId),
-      importDate: batch.importDate.split('/').reverse().join('-'), // Chuyển dd/mm/yyyy thành yyyy-mm-dd cho input date
-      expiryDate: batch.expiryDate.split('/').reverse().join('-'),
+      importDate: toInputDate(batch.importDate),
+      expiryDate: toInputDate(batch.expiryDate),
       stock: batch.stock,
-      warehouseLocation: batch.location || ''
+      warehouseLocation: ''
     });
     setIsModalOpen(true);
   };
@@ -176,7 +170,6 @@ export default function BatchManagementPage() {
               batch_number: formData.batchId,
               expiry_date: formData.expiryDate,
               current_qty: Number(formData.stock),
-              warehouse_location: formData.warehouseLocation,
             }),
           }
         );
@@ -208,7 +201,6 @@ export default function BatchManagementPage() {
           import_date: formData.importDate,
           expiry_date: formData.expiryDate,
           original_qty: Number(formData.stock),
-          warehouse_location: formData.warehouseLocation,
         }),
       });
 
@@ -276,8 +268,15 @@ export default function BatchManagementPage() {
           <h1>Kiểm soát Lô hàng &amp; Hạn sử dụng</h1>
         </div>
         <div className="batch-header-actions">
-          <button className="batch-export-btn" type="button" onClick={() => window.print()}>♧ <span>Xuất báo cáo<br />FEFO</span></button>
-          <button className="batch-primary-btn" onClick={handleOpenAddModal}>＋ Nhập Lô Hàng Mới</button>
+          <button className="batch-export-btn" type="button" onClick={() => window.print()}>⇩ <span>Xuất báo cáo<br />FEFO</span></button>
+          {canManageBatches && (
+            <button
+              className="batch-primary-btn"
+              onClick={handleOpenAddModal}
+            >
+              ＋ Nhập Lô Hàng Mới
+            </button>
+          )}
         </div>
       </div>
 
@@ -311,26 +310,10 @@ export default function BatchManagementPage() {
 
       <section className="batch-table-panel">
         <div className="batch-toolbar">
-          <label className="batch-search">⌕ <input type="text" placeholder="Tìm theo Mã lô hoặc sản phẩm" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} /></label>
+          <label className="batch-search">⌕ <input type="text" placeholder="Tìm theo mã lô hoặc sản phẩm" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} /></label>
           <select className="batch-filter" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
             <option>Tất cả trạng thái Date</option><option>An toàn</option><option>Cận Date</option><option>Hết hạn</option>
           </select>
-          <div className="batch-warehouse-pills">
-            {[
-              ['all', 'Tất cả kho'],
-              ['Kho lạnh A', 'Kho lạnh A'],
-              ['Kho lạnh B', 'Kho lạnh B'],
-            ].map(([value, label]) => (
-              <button
-                type="button"
-                key={value}
-                className={warehouseFilter === value ? 'selected' : ''}
-                onClick={() => setWarehouseFilter(value)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
           <span className="batch-count">Đang xem <b>{filteredBatches.length}/{batches.length}</b> lô</span>
         </div>
 
@@ -338,119 +321,107 @@ export default function BatchManagementPage() {
           <table className="batch-data-table">
             <thead><tr>
               <th className="batch-check-col"><input type="checkbox" aria-label="Chọn tất cả" /></th>
-              <th>MÃ LÔ</th><th>SẢN PHẨM</th><th>NGÀY NHẬP</th><th>HẠN SỬ DỤNG ↕</th>
-              <th className="align-right">TỒN THỰC TẾ</th><th>VỊ TRÍ LƯU KHO</th><th>TRẠNG THÁI DATE</th><th>THAO TÁC</th>
+              <th>MÃ LÔ HÀNG</th><th>MÃ SKU / SẢN PHẨM</th><th>MÃ CỬA HÀNG</th><th>MÃ NHÀ CUNG CẤP</th><th>NGÀY NHẬP</th><th>NGÀY SẢN XUẤT</th><th>HẠN SỬ DỤNG</th>
+              <th className="align-right">SỐ LƯỢNG TỒN</th><th>GIÁ NHẬP / ĐƠN VỊ</th><th>TỔNG GIÁ NHẬP LÔ</th><th>TRẠNG THÁI LÔ</th>{canManageBatches && (<th>THAO TÁC</th>)}
             </tr></thead>
             <tbody>
               {filteredBatches.map((item) => (
                 <tr key={item.id}>
                   <td><input type="checkbox" aria-label={`Chọn lô ${item.batchId}`} /></td>
-                  <td><span className="batch-code"><i />{item.batchId}</span></td>
-                  <td><div className="batch-product-cell"><div><b>{item.productName}</b><small>SKU: {products.find(p => p.id === Number(item.productId))?.sku || '—'}</small></div></div></td>
-                  <td>{item.importDate}</td>
-                  <td><div className={`batch-expiry ${item.status === 'Hết hạn' ? 'expired' : ''}`}><b>{item.expiryDate}</b><small className={item.status === 'An toàn' ? 'safe' : item.status === 'Cận Date' ? 'near' : 'expired-tag'}>{item.status}</small></div></td>
-                  <td className="align-right"><b>{Number(item.stock).toLocaleString('vi-VN')}</b> <span className="batch-unit">đơn vị</span></td>
+                  <td><span className="batch-code">{item.batchId}</span></td>
+                  <td><div className="batch-product-cell"><div><b>{item.productName || '—'}</b><small>maSKU: {products.find(p => p.id === Number(item.productId))?.sku || item.maSKU || '—'}</small></div></div></td>
+                  <td>{item.maCuaHang || '—'}</td>
+                  <td>{item.maNhaCungCap || '—'}</td>
+                  <td>{item.importDate || item.ngayNhap || '—'}</td>
+                  <td>{item.ngaySanXuat || '—'}</td>
+                  <td><div className={`batch-expiry ${item.status === 'Hết hạn' ? 'expired' : ''}`}><b>{item.expiryDate || item.hanSuDung || '—'}</b><small className={item.status === 'An toàn' ? 'safe' : item.status === 'Cận Date' ? 'near' : 'expired-tag'}>{item.status}</small></div></td>
+                  <td className="align-right"><b>{Number(item.stock ?? item.soLuongTon ?? 0).toLocaleString('vi-VN')}</b> <span className="batch-unit">{item.maDonViBan || 'đơn vị'}</span></td>
+                  <td>{item.giaNhapMoiDonVi != null ? Number(item.giaNhapMoiDonVi).toLocaleString('vi-VN') + ' ₫' : '—'}</td>
+                  <td>{item.giaNhapTongLo != null ? Number(item.giaNhapTongLo).toLocaleString('vi-VN') + ' ₫' : '—'}</td>
+                  <td><span className={`batch-status ${item.status === 'An toàn' ? 'safe' : item.status === 'Cận Date' ? 'near' : 'expired'}`}><i />{item.trangThaiLo || item.status}</span></td>
                   <td>
-                    <span className="batch-location">
-                      {item.location || 'Chưa gán vị trí'}
-                    </span>
-                  </td>
-                  <td><span className={`batch-status ${item.status === 'An toàn' ? 'safe' : item.status === 'Cận Date' ? 'near' : 'expired'}`}><i />{item.status}</span></td>
-                  <td><div className="batch-row-actions"><button type="button" className="batch-row-action" title="Chỉnh sửa" onClick={() => handleOpenEditModal(item)}>✎</button><button type="button" className="batch-row-action is-delete" title="Xóa" onClick={() => handleDeleteBatch(item.id)}>⌫</button></div></td>
-                </tr>
+                    {canManageBatches && (
+                      <div className="batch-row-actions">
+                        <button
+                          type="button"
+                          className="batch-row-action"
+                          title="Chỉnh sửa"
+                          onClick={() => handleOpenEditModal(item)}
+                        >
+                          ✎
+                        </button>
+
+                        <button
+                          type="button"
+                          className="batch-row-action is-delete"
+                          title="Xóa"
+                          onClick={() => handleDeleteBatch(item.id)}
+                        >
+                          ⌫
+                        </button>
+                      </div>
+                    )}
+                  </td>                </tr>
               ))}
-              {filteredBatches.length === 0 && <tr><td colSpan="9" className="batch-empty">Không tìm thấy lô hàng phù hợp.</td></tr>}
+              {filteredBatches.length === 0 && <tr><td colSpan="13" className="batch-empty">Không tìm thấy lô hàng phù hợp.</td></tr>}
             </tbody>
           </table>
         </div>
       </section>
 
       {isModalOpen && (
-        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(15, 23, 42, 0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '20px' }}>
-          <div style={{ background: 'white', padding: '30px', borderRadius: '12px', width: '450px', maxWidth: '100%', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
-            <h3 style={{ marginTop: 0, marginBottom: '20px', color: '#1e293b' }}>
-              {editingBatch ? 'Chỉnh sửa thông tin Lô hàng' : 'Nhập Lô Hàng Mới (FEFO)'}
-            </h3>
-            
-            <form onSubmit={handleSaveBatch} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+        <div className="batch-modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setIsModalOpen(false); }}>
+          <section className="batch-modal" role="dialog" aria-modal="true" aria-labelledby="batch-modal-title">
+            <div className="batch-modal-header">
               <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '5px', color: '#475569' }}>Mã lô hàng</label>
-                <input required disabled={editingBatch !== null} className="erp-input" style={{ width: '100%', boxSizing: 'border-box' }} placeholder="VD: LOT-004" value={formData.batchId} onChange={e => setFormData({...formData, batchId: e.target.value})} />
+                <p className="batch-modal-eyebrow">QUẢN LÝ KHO HÀNG</p>
+                <h2 id="batch-modal-title">{editingBatch ? 'Sửa thông tin lô hàng' : 'Nhập lô hàng mới'}</h2>
               </div>
+              <button type="button" className="batch-modal-close" aria-label="Đóng" onClick={() => setIsModalOpen(false)}>×</button>
+            </div>
 
-              <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '5px', color: '#475569' }}>
-                  Tên sản phẩm
-                </label>
-
-                <select
-                  required
-                  className="erp-select"
-                  style={{ width: '100%', boxSizing: 'border-box' }}
-                  value={formData.productId}
-                  onChange={(e) => {
-                    const selectedProduct = products.find(
-                      (product) => product.id === Number(e.target.value)
-                    );
-
-                    setFormData({
-                      ...formData,
-                      productId: e.target.value,
-                      productName: selectedProduct ? selectedProduct.name : '',
-                    });
-                  }}
-                >
-                  <option value="">-- Chọn sản phẩm --</option>
-
-                  {products.map((product) => (
-                    <option key={product.id} value={product.id}>
-                      {product.name} - SKU: {product.sku}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="form-group">
-                <label htmlFor="warehouseLocation">Vị trí lưu kho</label>
-                <select
-                  id="warehouseLocation"
-                  name="warehouseLocation"
-                  value={formData.warehouseLocation}
-                  onChange={(e) =>
-                    setFormData({
-                      ...formData,
-                      warehouseLocation: e.target.value,
-                    })
-                  }
-                  required
-                >
-                  <option value="Kho lạnh A">Kho lạnh A</option>
-                  <option value="Kho lạnh B">Kho lạnh B</option>
-                </select>
-              </div>
-
-
-              <div style={{ display: 'flex', gap: '10px' }}>
-                <div style={{ flex: 1 }}>
-                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '5px', color: '#475569' }}>Ngày nhập hàng</label>
-                  <input required type="date" className="erp-input" style={{ width: '100%', boxSizing: 'border-box' }} value={formData.importDate} onChange={e => setFormData({...formData, importDate: e.target.value})} />
+            <form onSubmit={handleSaveBatch} className="batch-form">
+              <div className="batch-form-section-title">Thông tin cơ bản</div>
+              <div className="batch-form-grid">
+                <div className="batch-form-field">
+                  <label htmlFor="batchId">Mã lô hàng <span>(maLoHang)</span></label>
+                  <input id="batchId" required disabled={editingBatch !== null} className="erp-input" placeholder="VD: LH202610_0001" value={formData.batchId} onChange={(e) => setFormData({ ...formData, batchId: e.target.value })} />
                 </div>
-                <div style={{ flex: 1 }}>
-                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '5px', color: '#475569' }}>Hạn sử dụng</label>
-                  <input required type="date" className="erp-input" style={{ width: '100%', boxSizing: 'border-box' }} value={formData.expiryDate} onChange={e => setFormData({...formData, expiryDate: e.target.value})} />
+
+                <div className="batch-form-field">
+                  <label htmlFor="productId">Sản phẩm / mã SKU <span>(maSKU)</span></label>
+                  <select id="productId" required disabled={editingBatch !== null} className="erp-select" value={formData.productId} onChange={(e) => {
+                    const selectedProduct = products.find((product) => product.id === Number(e.target.value));
+                    setFormData({ ...formData, productId: e.target.value, productName: selectedProduct ? selectedProduct.name : '' });
+                  }}>
+                    <option value="">-- Chọn sản phẩm --</option>
+                    {products.map((product) => <option key={product.id} value={product.id}>{product.name} - SKU: {product.sku}</option>)}
+                  </select>
+                  {editingBatch && <small className="batch-field-hint">Không đổi sản phẩm của lô đã tạo.</small>}
+                </div>
+
+                {!editingBatch && <div className="batch-form-field">
+                  <label htmlFor="importDate">Ngày nhập <span>(ngayNhap)</span></label>
+                  <input id="importDate" required type="date" className="erp-input" value={formData.importDate} onChange={(e) => setFormData({ ...formData, importDate: e.target.value })} />
+                </div>}
+
+                <div className="batch-form-field">
+                  <label htmlFor="expiryDate">Hạn sử dụng <span>(hanSuDung)</span></label>
+                  <input id="expiryDate" required type="date" className="erp-input" value={formData.expiryDate} onChange={(e) => setFormData({ ...formData, expiryDate: e.target.value })} />
+                </div>
+
+                <div className="batch-form-field">
+                  <label htmlFor="stock">{editingBatch ? 'Số lượng tồn' : 'Số lượng nhập ban đầu'} <span>({editingBatch ? 'soLuongTon' : 'soLuongNhap'})</span></label>
+                  <input id="stock" required min="0" step="1" type="number" className="erp-input" placeholder="Nhập số lượng" value={formData.stock} onChange={(e) => setFormData({ ...formData, stock: e.target.value })} />
                 </div>
               </div>
-              
-              <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '5px', color: '#475569' }}>Số lượng tồn thực tế</label>
-                <input required className="erp-input" style={{ width: '100%', boxSizing: 'border-box' }} placeholder="0" type="number" value={formData.stock} onChange={e => setFormData({...formData, stock: e.target.value})} />
-              </div>
 
-              <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
-                <button type="button" className="erp-btn-primary" style={{ flex: 1, background: '#e2e8f0', color: '#475569', justifyContent: 'center' }} onClick={() => setIsModalOpen(false)}>Hủy</button>
-                <button type="submit" className="erp-btn-primary" style={{ flex: 1, justifyContent: 'center' }}>Lưu Lô Hàng</button>
+              <div className="batch-form-actions">
+                <button type="button" className="batch-modal-cancel" onClick={() => setIsModalOpen(false)}>Hủy</button>
+                <button type="submit" className="batch-modal-submit">{editingBatch ? 'Lưu thay đổi' : 'Tạo lô hàng'}</button>
               </div>
             </form>
-          </div>
+          </section>
         </div>
       )}
     </div>
