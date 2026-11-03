@@ -1,4 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
+import axios from 'axios';
+import './BatchManagementPage.css';
 
 export default function BatchManagementPage() {
   const [searchTerm, setSearchTerm] = useState('');
@@ -7,22 +9,10 @@ export default function BatchManagementPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingBatch, setEditingBatch] = useState(null);
 
-  // 1. ĐỌC DỮ LIỆU TỪ localStorage KHI KHỞI TẠO (Nếu chưa có mới dùng dữ liệu mẫu mặc định)
-  const [batches, setBatches] = useState(() => {
-    const savedBatches = localStorage.getItem('batches_list');
-    if (savedBatches) {
-      try {
-        return JSON.parse(savedBatches);
-      } catch (e) {
-        console.error("Lỗi đọc dữ liệu từ localStorage", e);
-      }
-    }
-    return [
-      { batchId: 'LOT-001', productName: 'Sữa tươi Vinamilk 1L', importDate: '01/08/2026', expiryDate: '25/09/2026', stock: 15, status: 'Cận Date' },
-      { batchId: 'LOT-002', productName: 'Bánh mì sandwich', importDate: '15/09/2026', expiryDate: '18/09/2026', stock: 0, status: 'Hết hạn' },
-      { batchId: 'LOT-003', productName: 'Gạo thơm Jasmine 5kg', importDate: '10/06/2026', expiryDate: '10/06/2027', stock: 45, status: 'An toàn' },
-    ];
-  });
+  // Danh sách lô hàng mẫu chuẩn FEFO
+  const [batches, setBatches] = useState([]);
+
+  const [products, setProducts] = useState([]);
 
   // 2. TỰ ĐỘNG LƯU VÀO localStorage MỖI KHI MẢNG `batches` CÓ THAY ĐỔI (Thêm, Sửa, Xóa)
   useEffect(() => {
@@ -31,21 +21,112 @@ export default function BatchManagementPage() {
 
   const [formData, setFormData] = useState({
     batchId: '',
+    productId: '',
     productName: '',
     importDate: new Date().toISOString().split('T')[0],
     expiryDate: '',
-    stock: ''
+    stock: '',
+    warehouseLocation: '',
   });
+  useEffect(() => {
+    fetchBatches();
+    fetchProducts();
+  }, []);
+  const calculateStatus = (expiryStr) => {
+      if (!expiryStr) return 'An toàn';
+      const today = new Date();
+      const expiry = new Date(expiryStr);
+      const diffTime = expiry - today;
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
+      if (diffDays < 0) return 'Hết hạn';
+      if (diffDays <= 7) return 'Cận Date';
+      return 'An toàn';
+    };
+  const filteredBatches = batches.filter((item) => {
+    const keyword = searchTerm.toLowerCase().trim();
+
+    const matchesSearch =
+      item.batchId.toLowerCase().includes(keyword) ||
+      item.productName.toLowerCase().includes(keyword);
+
+    const matchesStatus =
+      statusFilter === 'Tất cả trạng thái Date' ||
+      item.status === statusFilter;
+
+    return matchesSearch && matchesStatus;
+  });
+  const fetchBatches = async () => {
+    try {
+      const token = localStorage.getItem('token');
+
+      const response = await fetch('http://127.0.0.1:8000/api/v1/batches', {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Không thể tải danh sách lô hàng (${response.status})`);
+      }
+
+      const data = await response.json();
+
+      const formattedBatches = data.map((batch) => ({
+        id: batch.id,
+        batchId: batch.batch_number,
+        productId: batch.product_id,
+        productName: batch.product_name,
+        importDate: batch.import_date,
+        expiryDate: batch.expiry_date,
+        stock: batch.current_qty,
+        status: calculateStatus(batch.expiry_date),
+      }));
+      console.log('Dữ liệu batch từ backend:', data);
+      console.log('Dữ liệu sau khi format:', formattedBatches);
+
+      setBatches(formattedBatches);
+    } catch (error) {
+      console.error('Lỗi tải danh sách lô hàng:', error);
+      console.error('Chi tiết lỗi:', error.message);
+
+    }
+  };
+  const fetchProducts = async () => {
+    try {
+      const token = localStorage.getItem('token');
+
+      const response = await fetch('http://127.0.0.1:8000/api/v1/products', {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Không thể tải danh sách sản phẩm (${response.status})`);
+      }
+
+      const data = await response.json();
+      setProducts(data);
+    } catch (error) {
+      console.error('Lỗi tải danh sách sản phẩm:', error);
+    }
+  };
+
+  // Mở modal thêm mới
   const handleOpenAddModal = () => {
     setEditingBatch(null);
+
     setFormData({
       batchId: '',
+      productId: '',
       productName: '',
       importDate: new Date().toISOString().split('T')[0],
       expiryDate: '',
-      stock: ''
+      stock: '',
+      warehouseLocation: ''
     });
+
     setIsModalOpen(true);
   };
 
@@ -53,16 +134,19 @@ export default function BatchManagementPage() {
     setEditingBatch(batch);
     setFormData({
       batchId: batch.batchId,
-      productName: batch.productName,
-      importDate: batch.importDate.split('/').reverse().join('-'),
-      expiryDate: batch.expiryDate.split('/').reverse().join('-'),
-      stock: batch.stock
+      productId: String(batch.productId),
+      importDate: toInputDate(batch.importDate),
+      expiryDate: toInputDate(batch.expiryDate),
+      stock: batch.stock,
+      warehouseLocation: ''
     });
     setIsModalOpen(true);
   };
 
-  const handleSaveBatch = (e) => {
+  // Xử lý Lưu (Thêm hoặc Cập nhật Lô)
+  const handleSaveBatch = async (e) => {
     e.preventDefault();
+
     const formatDate = (dateStr) => {
       if (!dateStr) return '';
       const parts = dateStr.split('-');
@@ -70,187 +154,274 @@ export default function BatchManagementPage() {
       return dateStr;
     };
 
-    const calculateStatus = (expiryStr) => {
-      if (!expiryStr) return 'An toàn';
-      const today = new Date();
-      const expiry = new Date(expiryStr);
-      const diffDays = Math.ceil((expiry - today) / (1000 * 60 * 60 * 24));
-      if (diffDays < 0) return 'Hết hạn';
-      if (diffDays <= 7) return 'Cận Date';
-      return 'An toàn';
-    };
+    try {
+      const token = localStorage.getItem('token');
 
-    const formattedBatch = {
-      batchId: formData.batchId,
-      productName: formData.productName,
-      importDate: formatDate(formData.importDate),
-      expiryDate: formatDate(formData.expiryDate),
-      stock: Number(formData.stock),
-      status: calculateStatus(formData.expiryDate)
-    };
+      if (editingBatch) {
+        const response = await fetch(
+          `http://127.0.0.1:8000/api/v1/batches/${editingBatch.id}`,
+          {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              batch_number: formData.batchId,
+              expiry_date: formData.expiryDate,
+              current_qty: Number(formData.stock),
+            }),
+          }
+        );
 
-    let updatedList;
-    if (editingBatch) {
-      updatedList = batches.map(b => b.batchId === editingBatch.batchId ? formattedBatch : b);
-    } else {
-      updatedList = [formattedBatch, ...batches];
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.detail || 'Không thể cập nhật lô hàng');
+        }
+
+        alert('Cập nhật lô hàng thành công!');
+
+        setIsModalOpen(false);
+        setEditingBatch(null);
+
+        fetchBatches();
+        return;
+      }
+
+      const response = await fetch('http://127.0.0.1:8000/api/v1/batches', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          product_id: Number(formData.productId),
+          batch_number: formData.batchId,
+          import_date: formData.importDate,
+          expiry_date: formData.expiryDate,
+          original_qty: Number(formData.stock),
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.detail || 'Không thể thêm lô hàng');
+      }
+
+      alert('Nhập lô hàng thành công!');
+
+      setIsModalOpen(false);
+
+      // Tải lại danh sách từ database
+      fetchBatches();
+
+    } catch (error) {
+      console.error('Lỗi thêm lô hàng:', error);
+      alert(error.message);
     }
-
-    setBatches(updatedList);
-    setIsModalOpen(false);
   };
 
-  const handleDeleteBatch = (batchId) => {
-    if (window.confirm(`Bạn có chắc chắn muốn xóa lô hàng ${batchId} không?`)) {
-      const filteredList = batches.filter(b => b.batchId !== batchId);
-      setBatches(filteredList);
+  // Xử lý Xóa lô hàng
+  const handleDeleteBatch = async (batchId) => {
+    if (!window.confirm(`Bạn có chắc chắn muốn xóa lô hàng ${batchId} không?`)) {
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem('token');
+
+      await axios.delete(
+        `http://127.0.0.1:8000/api/v1/batches/${batchId}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        }
+      );
+
+      alert('Xóa lô hàng thành công');
+
+      await fetchBatches();
+    } catch (error) {
+      console.error(
+        'Lỗi xóa lô hàng:',
+        error.response?.data || error
+      );
+
+      alert(
+        error.response?.data?.detail ||
+        'Xóa lô hàng thất bại'
+      );
     }
   };
 
-  // Logic lọc dữ liệu
-  const filteredBatches = batches.filter(item => {
-    const matchesSearch = item.productName.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                          item.batchId.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus = statusFilter === 'Tất cả trạng thái Date' || item.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
-
+  const safeCount = batches.filter((b) => b.status === 'An toàn').length;
+  const nearCount = batches.filter((b) => b.status === 'Cận Date').length;
+  const expiredCount = batches.filter((b) => b.status === 'Hết hạn').length;
+  const totalStock = batches.reduce((sum, b) => sum + (Number(b.stock) || 0), 0);
   return (
-    <div>
-      {/* 3 THẺ KPI TỔNG QUAN */}
-      <div className="erp-kpi-row" style={{ marginBottom: '24px' }}>
-        <div className="erp-kpi-card" style={{ borderLeft: '4px solid #3b82f6' }}>
-          <div className="erp-kpi-info">
-            <h4 style={{ color: '#3b82f6', fontSize: '1.6rem', margin: 0 }}>{batches.length}</h4>
-            <p style={{ color: '#64748b', margin: '5px 0 0 0', fontWeight: '600', fontSize: '0.8rem' }}>TỔNG SỐ LÔ HÀNG</p>
-          </div>
+    <div className="batch-page">
+      <div className="batch-page-header">
+        <div className="batch-heading">
+          <h1>Kiểm soát Lô hàng &amp; Hạn sử dụng</h1>
         </div>
-        
-        <div className="erp-kpi-card" style={{ borderLeft: '4px solid #f59e0b' }}>
-          <div className="erp-kpi-info">
-            <h4 style={{ color: '#f59e0b', fontSize: '1.6rem', margin: 0 }}>{batches.filter(b => b.status === 'Cận Date').length}</h4>
-            <p style={{ color: '#64748b', margin: '5px 0 0 0', fontWeight: '600', fontSize: '0.8rem' }}>LÔ HÀNG CẬN DATE (≤ 7 ngày)</p>
-          </div>
-        </div>
-
-        <div className="erp-kpi-card" style={{ borderLeft: '4px solid #ef4444' }}>
-          <div className="erp-kpi-info">
-            <h4 style={{ color: '#ef4444', fontSize: '1.6rem', margin: 0 }}>{batches.filter(b => b.status === 'Hết hạn').length}</h4>
-            <p style={{ color: '#64748b', margin: '5px 0 0 0', fontWeight: '600', fontSize: '0.8rem' }}>LÔ HÀNG ĐÃ HẾT HẠN</p>
-          </div>
+        <div className="batch-header-actions">
+          <button className="batch-export-btn" type="button" onClick={() => window.print()}>⇩ <span>Xuất báo cáo<br />FEFO</span></button>
+          {canManageBatches && (
+            <button
+              className="batch-primary-btn"
+              onClick={handleOpenAddModal}
+            >
+              ＋ Nhập Lô Hàng Mới
+            </button>
+          )}
         </div>
       </div>
 
-      {/* THANH TÌM KIẾM & NÚT THÊM */}
-      <div className="erp-page-header">
-        <div className="erp-filters-group">
-          <input 
-            type="text" 
-            className="erp-input" 
-            placeholder="🔍 Tìm theo Mã lô hoặc Tên sản phẩm..." 
-            style={{ width: '300px' }}
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-          <select className="erp-select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-            <option>Tất cả trạng thái Date</option>
-            <option>An toàn</option>
-            <option>Cận Date</option>
-            <option>Hết hạn</option>
+      <div className="batch-stats-grid">
+        <div className="batch-stat-card stat-purple">
+          <div className="batch-stat-top"><span>TỔNG SỐ LÔ HÀNG</span><small>↑ {batches.length} lô hiện có</small></div>
+          <div className="batch-stat-value">{batches.length} <span>lô đang lưu kho</span></div>
+          <div className="batch-stat-foot"><span>Số lượng tồn thực tế</span><b>{totalStock.toLocaleString('vi-VN')} đơn vị</b></div>
+          
+          
+        </div>
+        <div className="batch-stat-card stat-orange">
+          <div className="batch-stat-top"><span>CẬN DATE (≤ 7 NGÀY)</span><small className="orange-tag">FEFO Ưu tiên</small></div>
+          <div className="batch-stat-value">{nearCount} <span>lô cần thanh lý gấp</span></div>
+          <p className="batch-stat-note">✓ Theo dõi và ưu tiên xuất trước</p>
+          <div className="batch-stat-foot">Lô cần chú ý: <b>{nearCount}</b></div>
+        </div>
+        <div className="batch-stat-card stat-red">
+          <div className="batch-stat-top"><span>LÔ ĐÃ HẾT HẠN</span><small className="red-tag">Tỷ lệ {batches.length ? ((expiredCount / batches.length) * 100).toFixed(1) : '0.0'}%</small></div>
+          <div className="batch-stat-value">{expiredCount} <span>lô quá hạn sử dụng</span></div>
+          <p className="batch-stat-note">✓ {expiredCount ? 'Cần kiểm tra và xử lý tồn đọng' : 'Không có thiệt hại tồn đọng'}</p>
+          <div className="batch-stat-foot">Cần xử lý: <b>{expiredCount} lô</b></div>
+        </div>
+        <div className="batch-stat-card stat-green">
+          <div className="batch-stat-top"><span>TỒN KHO AN TOÀN</span><small className="green-tag">Chỉ số FEFO</small></div>
+          <div className="batch-stat-value green-value">{batches.length ? ((safeCount / batches.length) * 100).toFixed(1) : '0.0'}% <span>đạt chuẩn chất lượng</span></div>
+          <div className="batch-progress green-progress"><i style={{ width: `${batches.length ? (safeCount / batches.length) * 100 : 0}%` }} /></div>
+          <div className="batch-stat-foot">Lô an toàn: <b>{safeCount}/{batches.length}</b></div>
+        </div>
+      </div>
+
+      <section className="batch-table-panel">
+        <div className="batch-toolbar">
+          <label className="batch-search">⌕ <input type="text" placeholder="Tìm theo mã lô hoặc sản phẩm" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} /></label>
+          <select className="batch-filter" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+            <option>Tất cả trạng thái Date</option><option>An toàn</option><option>Cận Date</option><option>Hết hạn</option>
           </select>
+          <span className="batch-count">Đang xem <b>{filteredBatches.length}/{batches.length}</b> lô</span>
         </div>
-        
-        <button className="erp-btn-primary" onClick={handleOpenAddModal}>
-          + Nhập Lô Hàng Mới
-        </button>
-      </div>
 
-      {/* BẢNG LÔ HÀNG */}
-      <div className="erp-table-container" style={{ overflowX: 'auto', maxWidth: '100%' }}>
-        <table className="erp-table" style={{ minWidth: '850px' }}>
-          <thead>
-            <tr>
-              <th>Mã Lô</th>
-              <th>Sản phẩm</th>
-              <th>Ngày nhập</th>
-              <th>Hạn sử dụng</th>
-              <th style={{ textAlign: 'right' }}>Tồn thực tế</th>
-              <th>Trạng thái Date</th>
-              <th>Thao tác</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredBatches.length > 0 ? (
-              filteredBatches.map((item, index) => (
-                <tr key={index}>
-                  <td style={{ fontWeight: '600', color: '#475569' }}>{item.batchId}</td>
-                  <td style={{ color: '#3b82f6', fontWeight: '500' }}>{item.productName}</td>
-                  <td>{item.importDate}</td>
-                  <td style={{ fontWeight: '600', color: item.status === 'Hết hạn' ? '#ef4444' : '#1e293b' }}>{item.expiryDate}</td>
-                  <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{item.stock}</td>
+        <div className="batch-table-scroll">
+          <table className="batch-data-table">
+            <thead><tr>
+              <th className="batch-check-col"><input type="checkbox" aria-label="Chọn tất cả" /></th>
+              <th>MÃ LÔ HÀNG</th><th>MÃ SKU / SẢN PHẨM</th><th>MÃ CỬA HÀNG</th><th>MÃ NHÀ CUNG CẤP</th><th>NGÀY NHẬP</th><th>NGÀY SẢN XUẤT</th><th>HẠN SỬ DỤNG</th>
+              <th className="align-right">SỐ LƯỢNG TỒN</th><th>GIÁ NHẬP / ĐƠN VỊ</th><th>TỔNG GIÁ NHẬP LÔ</th><th>TRẠNG THÁI LÔ</th>{canManageBatches && (<th>THAO TÁC</th>)}
+            </tr></thead>
+            <tbody>
+              {filteredBatches.map((item) => (
+                <tr key={item.id}>
+                  <td><input type="checkbox" aria-label={`Chọn lô ${item.batchId}`} /></td>
+                  <td><span className="batch-code">{item.batchId}</span></td>
+                  <td><div className="batch-product-cell"><div><b>{item.productName || '—'}</b><small>maSKU: {products.find(p => p.id === Number(item.productId))?.sku || item.maSKU || '—'}</small></div></div></td>
+                  <td>{item.maCuaHang || '—'}</td>
+                  <td>{item.maNhaCungCap || '—'}</td>
+                  <td>{item.importDate || item.ngayNhap || '—'}</td>
+                  <td>{item.ngaySanXuat || '—'}</td>
+                  <td><div className={`batch-expiry ${item.status === 'Hết hạn' ? 'expired' : ''}`}><b>{item.expiryDate || item.hanSuDung || '—'}</b><small className={item.status === 'An toàn' ? 'safe' : item.status === 'Cận Date' ? 'near' : 'expired-tag'}>{item.status}</small></div></td>
+                  <td className="align-right"><b>{Number(item.stock ?? item.soLuongTon ?? 0).toLocaleString('vi-VN')}</b> <span className="batch-unit">{item.maDonViBan || 'đơn vị'}</span></td>
+                  <td>{item.giaNhapMoiDonVi != null ? Number(item.giaNhapMoiDonVi).toLocaleString('vi-VN') + ' ₫' : '—'}</td>
+                  <td>{item.giaNhapTongLo != null ? Number(item.giaNhapTongLo).toLocaleString('vi-VN') + ' ₫' : '—'}</td>
+                  <td><span className={`batch-status ${item.status === 'An toàn' ? 'safe' : item.status === 'Cận Date' ? 'near' : 'expired'}`}><i />{item.trangThaiLo || item.status}</span></td>
                   <td>
-                    <span className={`status-badge ${item.status === 'An toàn' ? 'success' : item.status === 'Cận Date' ? 'warning' : 'danger'}`}>
-                      {item.status}
-                    </span>
-                  </td>
-                  <td style={{ whiteSpace: 'nowrap' }}>
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                      <button className="erp-action-btn" title="Chỉnh sửa" onClick={() => handleOpenEditModal(item)}>✏️</button>
-                      <button className="erp-action-btn delete" title="Xóa lô" onClick={() => handleDeleteBatch(item.batchId)}>🗑️</button>
-                    </div>
-                  </td>
-                </tr>
-              ))
-            ) : (
-              <tr>
-                <td colSpan="7" style={{ textAlign: 'center', padding: '30px', color: '#64748b' }}>Không tìm thấy lô hàng phù hợp.</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+                    {canManageBatches && (
+                      <div className="batch-row-actions">
+                        <button
+                          type="button"
+                          className="batch-row-action"
+                          title="Chỉnh sửa"
+                          onClick={() => handleOpenEditModal(item)}
+                        >
+                          ✎
+                        </button>
 
-      {/* POPUP MODAL */}
+                        <button
+                          type="button"
+                          className="batch-row-action is-delete"
+                          title="Xóa"
+                          onClick={() => handleDeleteBatch(item.id)}
+                        >
+                          ⌫
+                        </button>
+                      </div>
+                    )}
+                  </td>                </tr>
+              ))}
+              {filteredBatches.length === 0 && <tr><td colSpan="13" className="batch-empty">Không tìm thấy lô hàng phù hợp.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       {isModalOpen && (
-        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(15, 23, 42, 0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '20px' }}>
-          <div style={{ background: 'white', padding: '30px', borderRadius: '12px', width: '450px', maxWidth: '100%', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
-            <h3 style={{ marginTop: 0, marginBottom: '20px', color: '#1e293b' }}>
-              {editingBatch ? 'Chỉnh sửa thông tin Lô hàng' : 'Nhập Lô Hàng Mới (FEFO)'}
-            </h3>
-            
-            <form onSubmit={handleSaveBatch} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+        <div className="batch-modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setIsModalOpen(false); }}>
+          <section className="batch-modal" role="dialog" aria-modal="true" aria-labelledby="batch-modal-title">
+            <div className="batch-modal-header">
               <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '5px', color: '#475569' }}>Mã lô hàng</label>
-                <input required disabled={editingBatch !== null} className="erp-input" style={{ width: '100%', boxSizing: 'border-box' }} placeholder="VD: LOT-004" value={formData.batchId} onChange={e => setFormData({...formData, batchId: e.target.value})} />
+                <p className="batch-modal-eyebrow">QUẢN LÝ KHO HÀNG</p>
+                <h2 id="batch-modal-title">{editingBatch ? 'Sửa thông tin lô hàng' : 'Nhập lô hàng mới'}</h2>
               </div>
+              <button type="button" className="batch-modal-close" aria-label="Đóng" onClick={() => setIsModalOpen(false)}>×</button>
+            </div>
 
-              <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '5px', color: '#475569' }}>Tên sản phẩm</label>
-                <input required className="erp-input" style={{ width: '100%', boxSizing: 'border-box' }} placeholder="Nhập tên sản phẩm..." value={formData.productName} onChange={e => setFormData({...formData, productName: e.target.value})} />
-              </div>
-
-              <div style={{ display: 'flex', gap: '10px' }}>
-                <div style={{ flex: 1 }}>
-                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '5px', color: '#475569' }}>Ngày nhập hàng</label>
-                  <input required type="date" className="erp-input" style={{ width: '100%', boxSizing: 'border-box' }} value={formData.importDate} onChange={e => setFormData({...formData, importDate: e.target.value})} />
+            <form onSubmit={handleSaveBatch} className="batch-form">
+              <div className="batch-form-section-title">Thông tin cơ bản</div>
+              <div className="batch-form-grid">
+                <div className="batch-form-field">
+                  <label htmlFor="batchId">Mã lô hàng <span>(maLoHang)</span></label>
+                  <input id="batchId" required disabled={editingBatch !== null} className="erp-input" placeholder="VD: LH202610_0001" value={formData.batchId} onChange={(e) => setFormData({ ...formData, batchId: e.target.value })} />
                 </div>
-                <div style={{ flex: 1 }}>
-                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '5px', color: '#475569' }}>Hạn sử dụng</label>
-                  <input required type="date" className="erp-input" style={{ width: '100%', boxSizing: 'border-box' }} value={formData.expiryDate} onChange={e => setFormData({...formData, expiryDate: e.target.value})} />
+
+                <div className="batch-form-field">
+                  <label htmlFor="productId">Sản phẩm / mã SKU <span>(maSKU)</span></label>
+                  <select id="productId" required disabled={editingBatch !== null} className="erp-select" value={formData.productId} onChange={(e) => {
+                    const selectedProduct = products.find((product) => product.id === Number(e.target.value));
+                    setFormData({ ...formData, productId: e.target.value, productName: selectedProduct ? selectedProduct.name : '' });
+                  }}>
+                    <option value="">-- Chọn sản phẩm --</option>
+                    {products.map((product) => <option key={product.id} value={product.id}>{product.name} - SKU: {product.sku}</option>)}
+                  </select>
+                  {editingBatch && <small className="batch-field-hint">Không đổi sản phẩm của lô đã tạo.</small>}
+                </div>
+
+                {!editingBatch && <div className="batch-form-field">
+                  <label htmlFor="importDate">Ngày nhập <span>(ngayNhap)</span></label>
+                  <input id="importDate" required type="date" className="erp-input" value={formData.importDate} onChange={(e) => setFormData({ ...formData, importDate: e.target.value })} />
+                </div>}
+
+                <div className="batch-form-field">
+                  <label htmlFor="expiryDate">Hạn sử dụng <span>(hanSuDung)</span></label>
+                  <input id="expiryDate" required type="date" className="erp-input" value={formData.expiryDate} onChange={(e) => setFormData({ ...formData, expiryDate: e.target.value })} />
+                </div>
+
+                <div className="batch-form-field">
+                  <label htmlFor="stock">{editingBatch ? 'Số lượng tồn' : 'Số lượng nhập ban đầu'} <span>({editingBatch ? 'soLuongTon' : 'soLuongNhap'})</span></label>
+                  <input id="stock" required min="0" step="1" type="number" className="erp-input" placeholder="Nhập số lượng" value={formData.stock} onChange={(e) => setFormData({ ...formData, stock: e.target.value })} />
                 </div>
               </div>
 
-              <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '5px', color: '#475569' }}>Số lượng tồn thực tế</label>
-                <input required className="erp-input" style={{ width: '100%', boxSizing: 'border-box' }} placeholder="0" type="number" value={formData.stock} onChange={e => setFormData({...formData, stock: e.target.value})} />
-              </div>
-
-              <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
-                <button type="button" className="erp-btn-primary" style={{ flex: 1, background: '#e2e8f0', color: '#475569', justifyContent: 'center' }} onClick={() => setIsModalOpen(false)}>Hủy</button>
-                <button type="submit" className="erp-btn-primary" style={{ flex: 1, justifyContent: 'center' }}>Lưu Lô Hàng</button>
+              <div className="batch-form-actions">
+                <button type="button" className="batch-modal-cancel" onClick={() => setIsModalOpen(false)}>Hủy</button>
+                <button type="submit" className="batch-modal-submit">{editingBatch ? 'Lưu thay đổi' : 'Tạo lô hàng'}</button>
               </div>
             </form>
-          </div>
+          </section>
         </div>
       )}
     </div>

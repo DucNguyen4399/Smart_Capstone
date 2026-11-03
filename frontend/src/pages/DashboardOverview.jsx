@@ -97,7 +97,9 @@ export default function DashboardOverview() {
           <div className="erp-kpi-info">
             <h4>{liveOrders}</h4>
             <p>Đơn hàng hôm nay</p>
-            <span className="badge-up">+500.0% so với hôm qua</span>
+            <span className="badge-up">
+              +500.0% so với hôm qua
+            </span>
           </div>
           <div className="erp-kpi-icon">📋</div>
         </div>
@@ -115,66 +117,146 @@ export default function DashboardOverview() {
       {/* KHỐI 2: BIỂU ĐỒ ĐỘNG CẬP NHẬT THEO DỮ LIỆU THỰC TẾ */}
       <div className="dashboard-layout">
         <div className="dashboard-main">
-          
-          <div className="chart-row">
-            {/* Nhập Xuất Tồn */}
+          <div className="dashboard-chart-grid">
+            {/* Nhập - Xuất - Tồn */}
             <div className="erp-panel">
               <div className="erp-panel-title"><span>|</span> Nhập - Xuất - Tồn (Động)</div>
               <div style={{ width: '100%', height: 240 }}>
-                <ResponsiveContainer>
+                <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={nxtData} barGap={0}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9"/>
-                    <XAxis dataKey="name" fontSize={11} tickLine={false} axisLine={false} />
-                    <YAxis fontSize={11} tickLine={false} axisLine={false} />
-                    <Tooltip cursor={{fill: 'transparent'}}/>
-                    <Bar dataKey="nhap" name="Nhập" fill="#10b981" barSize={14} />
-                    <Bar dataKey="xuat" name="Xuất" fill="#ef4444" barSize={14} />
-                    <Bar dataKey="ton" name="Tồn" fill="#3b82f6" barSize={14} />
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      vertical={false}
+                      stroke="#f1f5f9"
+                    />
+                    <XAxis
+                      dataKey="name"
+                      fontSize={11}
+                      tickLine={false}
+                      axisLine={false}
+                    />
+                    <YAxis
+                      fontSize={11}
+                      tickLine={false}
+                      axisLine={false}
+                    />
+                    <Tooltip cursor={{ fill: 'transparent' }} />
+                    <Bar
+                      dataKey="nhap"
+                      name="Nhập"
+                      fill="#10b981"
+                      barSize={14}
+                    />
+                    <Bar
+                      dataKey="xuat"
+                      name="Xuất"
+                      fill="#ef4444"
+                      barSize={14}
+                    />
+                    <Bar
+                      dataKey="ton"
+                      name="Tồn"
+                      fill="#3b82f6"
+                      barSize={14}
+                    />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
             </div>
 
-            {/* Số lượng & Doanh thu */}
-            <div className="erp-panel">
-              <div className="erp-panel-title"><span>|</span> Số lượng & Doanh thu</div>
-              <div style={{ width: '100%', height: 240 }}>
-                <ResponsiveContainer>
-                  <ComposedChart data={comboData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9"/>
-                    <XAxis dataKey="name" fontSize={11} tickLine={false} axisLine={false} />
-                    <YAxis yAxisId="left" fontSize={11} tickLine={false} axisLine={false} />
-                    <Tooltip />
-                    <Bar yAxisId="left" dataKey="col" fill="#a855f7" barSize={30} />
-                    <Line yAxisId="left" type="monotone" dataKey="line" stroke="#10b981" strokeWidth={2} dot={{r: 4}} />
-                  </ComposedChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          </div>
+            {/* Số lượng & Doanh thu - Admin */}
+            {isAdmin && (
+              <div className="erp-panel">
+                <div className="erp-panel-title">
+                  <span>|</span> Số lượng &amp; Doanh thu
+                </div>
 
-          <div className="chart-row">
-            {/* Xu hướng doanh thu */}
-            <div className="erp-panel">
-              <div className="erp-panel-title"><span>|</span> Xu hướng doanh thu</div>
-              <div style={{ width: '100%', height: 240 }}>
-                <ResponsiveContainer>
-                  <AreaChart data={trendData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9"/>
-                    <XAxis dataKey="name" fontSize={11} tickLine={false} axisLine={false} />
-                    <YAxis fontSize={11} tickLine={false} axisLine={false} />
-                    <Tooltip />
-                    <Area type="monotone" dataKey="value" stroke="#3b82f6" fill="#eff6ff" strokeWidth={3} />
-                  </AreaChart>
-                </ResponsiveContainer>
+                <div style={{ width: '100%', height: 240 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={comboData}>
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        vertical={false}
+                        stroke="#f1f5f9"
+                      />
+                      <XAxis
+                        dataKey="name"
+                        fontSize={11}
+                        tickLine={false}
+                        axisLine={false}
+                      />
+                      <YAxis
+                        yAxisId="left"
+                        fontSize={11}
+                        tickLine={false}
+                        axisLine={false}
+                      />
+                      <Tooltip />
+                      <Bar
+                        yAxisId="left"
+                        dataKey="col"
+                        fill="#a855f7"
+                        barSize={30}
+                      />
+                      <Line
+                        yAxisId="left"
+                        type="monotone"
+                        dataKey="line"
+                        stroke="#10b981"
+                        strokeWidth={2}
+                        dot={{ r: 4 }}
+                      />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
-            </div>
+            )}
+
+            {/* Xu hướng doanh thu - Admin */}
+            {isAdmin && (
+              <div className="erp-panel">
+                <div className="erp-panel-title">
+                  <span>|</span> Xu hướng doanh thu
+                </div>
+
+                <div style={{ width: '100%', height: 240 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={trendData}>
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        vertical={false}
+                        stroke="#f1f5f9"
+                      />
+                      <XAxis
+                        dataKey="name"
+                        fontSize={11}
+                        tickLine={false}
+                        axisLine={false}
+                      />
+                      <YAxis
+                        fontSize={11}
+                        tickLine={false}
+                        axisLine={false}
+                      />
+                      <Tooltip />
+                      <Area
+                        type="monotone"
+                        dataKey="value"
+                        stroke="#3b82f6"
+                        fill="#eff6ff"
+                        strokeWidth={3}
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            )}
 
             {/* Tỷ trọng sản phẩm động */}
             <div className="erp-panel">
               <div className="erp-panel-title"><span>|</span> Tỷ trọng sản phẩm (Theo kho thực tế)</div>
               <div style={{ width: '100%', height: 240 }}>
-                <ResponsiveContainer>
+                <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie data={pieData} cx="50%" cy="50%" innerRadius={50} outerRadius={85} dataKey="value" label stroke="none">
                       <Cell fill="#3b82f6" />
@@ -187,24 +269,38 @@ export default function DashboardOverview() {
                 </ResponsiveContainer>
               </div>
             </div>
-          </div>
 
-          <div className="chart-row">
             {/* Diễn biến tồn kho */}
             <div className="erp-panel">
-              <div className="erp-panel-title"><span>|</span> Diễn biến tồn kho</div>
+              <div className="erp-panel-title">
+                <span>|</span> Diễn biến tồn kho
+              </div>
+
               <div style={{ width: '100%', height: 240 }}>
-                <ResponsiveContainer>
+                <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={progressData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9"/>
-                    <XAxis dataKey="name" fontSize={11} tickLine={false} axisLine={false} />
-                    <YAxis fontSize={11} tickLine={false} axisLine={false} tickFormatter={(val) => val/1000000 + 'M'}/>
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      vertical={false}
+                      stroke="#f1f5f9"
+                    />
+                    <XAxis
+                      dataKey="name"
+                      fontSize={11}
+                      tickLine={false}
+                      axisLine={false}
+                    />
+                    <YAxis
+                      fontSize={11}
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={(val) => val / 1000000 + 'M'}
+                    />
                     <Tooltip />
                     <Bar dataKey="value" barSize={40}>
-                      <Cell fill="#10b981" />
-                      <Cell fill="#10b981" />
-                      <Cell fill="#ef4444" />
-                      <Cell fill="#10b981" />
+                      {progressData.map((entry) => (
+                        <Cell key={entry.name} fill={entry.fill} />
+                      ))}
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
@@ -215,11 +311,30 @@ export default function DashboardOverview() {
             <div className="erp-panel">
               <div className="erp-panel-title"><span>|</span> So sánh tồn kho (Top sản phẩm)</div>
               <div style={{ width: '100%', height: 240 }}>
-                <ResponsiveContainer>
-                  <BarChart data={compareData} layout="vertical" margin={{top: 0, right: 15, left: -15, bottom: 0}}>
-                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9"/>
-                    <XAxis type="number" fontSize={11} tickLine={false} axisLine={false}/>
-                    <YAxis dataKey="name" type="category" fontSize={11} tickLine={false} axisLine={false}/>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={compareData}
+                    layout="vertical"
+                    margin={{ top: 0, right: 15, left: -15, bottom: 0 }}
+                  >
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      horizontal={false}
+                      stroke="#f1f5f9"
+                    />
+                    <XAxis
+                      type="number"
+                      fontSize={11}
+                      tickLine={false}
+                      axisLine={false}
+                    />
+                    <YAxis
+                      dataKey="name"
+                      type="category"
+                      fontSize={11}
+                      tickLine={false}
+                      axisLine={false}
+                    />
                     <Tooltip />
                     <Bar dataKey="val" barSize={16} fill="#3b82f6" />
                   </BarChart>
@@ -227,17 +342,30 @@ export default function DashboardOverview() {
               </div>
             </div>
           </div>
-
         </div>
 
         {/* CỘT PHẢI */}
         <div className="dashboard-side">
+          {/* Hoạt động gần đây */}
           <div className="erp-panel">
-            <div className="erp-panel-title"><span>|</span> Hoạt động gần đây</div>
+            <div className="erp-panel-title">
+              <span>|</span> Hoạt động gần đây
+            </div>
+
             <ul className="activity-list">
               <li className="activity-item">
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                  <span style={{ color: '#10b981', background: '#ecfdf5', padding: '6px', borderRadius: '6px', fontWeight: 'bold' }}>↓</span>
+                  <span
+                    style={{
+                      color: '#10b981',
+                      background: '#ecfdf5',
+                      padding: '6px',
+                      borderRadius: '6px',
+                      fontWeight: 'bold',
+                    }}
+                  >
+                    ↓
+                  </span>
                   <div>
                     <div style={{ color: '#334155', fontWeight: '600' }}>Cập nhật kho thực tế</div>
                     <div style={{ color: '#94a3b8', fontSize: '0.75rem', marginTop: '2px' }}>Hôm nay</div>
@@ -248,6 +376,7 @@ export default function DashboardOverview() {
             </ul>
           </div>
 
+          {/* Cảnh báo sản phẩm */}
           <div className="erp-panel">
             <div className="erp-panel-title"><span>|</span> Quản lý tổng quan</div>
             <p style={{ fontSize: '0.85rem', color: '#64748b' }}>
