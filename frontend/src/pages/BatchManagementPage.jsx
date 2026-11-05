@@ -268,7 +268,7 @@ export default function BatchManagementPage() {
           <h1>Kiểm soát Lô hàng &amp; Hạn sử dụng</h1>
         </div>
         <div className="batch-header-actions">
-          <button className="batch-export-btn" type="button" onClick={() => window.print()}>⇩ <span>Xuất báo cáo<br />FEFO</span></button>
+          <button className="batch-export-btn" type="button" onClick={() => window.print()}> <span>Xuất báo cáo</span></button>
           {canManageBatches && (
             <button
               className="batch-primary-btn"

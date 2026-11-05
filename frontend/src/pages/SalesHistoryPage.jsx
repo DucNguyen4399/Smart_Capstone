@@ -360,7 +360,7 @@ function SalesHistoryPage() {
             onClick={handleImportSales}
             disabled={!importFile || importing}
           >
-            {importing ? 'Đang nhập...' : '↑ Nhập dữ liệu'}
+            {importing ? 'Đang nhập...' : 'Nhập dữ liệu'}
           </button>
 
           <button
@@ -369,7 +369,7 @@ function SalesHistoryPage() {
             onClick={exportCSV}
             disabled={filteredSales.length === 0}
           >
-            ⇩ Xuất CSV
+            Xuất CSV
           </button>
         </div>
       </header>

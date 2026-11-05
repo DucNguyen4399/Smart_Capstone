@@ -22,10 +22,14 @@ const menuItems = [
   {
     id: 'stock_transactions',
     title: 'Nhập / Xuất kho',
-    roles: ['Admin', 'Store Manager'],
+    roles: ['Admin', 'Store Manager', 'Store Staff'],
   },
   { id: 'sales_history', title: 'Lịch sử bán hàng' },
-  { id: 'ai_assistant', title: 'Trợ lý AI' },
+  {
+    id: 'ai_assistant',
+    title: 'Trợ lý AI',
+    roles: ['Admin', 'Store Manager'],
+  },
   {
     id: 'recommendation',
     title: 'Đề xuất nhập hàng',
@@ -137,7 +141,7 @@ export default function Dashboard({ role, onLogout }) {
             </button>
 
             <div className="navbar-page-info">
-              <span className="navbar-eyebrow">NHẬP XUẤT TỒN / QUẢN LÝ</span>
+              <span className="navbar-eyebrow">NHẬP XUẤT TỒN</span>
               <h1 className="top-navbar-title">{menuTitles[safeActiveMenu]}</h1>
             </div>
           </div>
@@ -167,7 +171,7 @@ export default function Dashboard({ role, onLogout }) {
 
           {safeActiveMenu === 'inventory' && <InventoryManagementPage />}
           {safeActiveMenu === 'stock_transactions' && (
-            <StockTransactionsPage />
+            <StockTransactionsPage role={normalizedRole} />
           )}
 
           {safeActiveMenu === 'sales_history' && <SalesHistoryPage />}

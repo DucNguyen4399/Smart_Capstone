@@ -1,119 +1,502 @@
-import React, { useState } from 'react';
+
+import React, { useState } from "react";
+import {
+  RefreshCw,
+  ShoppingCart,
+  Percent,
+  Wallet,
+  TrendingUp,
+  Package,
+  AlertTriangle,
+  Clock,
+  Info,
+  Plus,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  X,
+  ClipboardList,
+} from "lucide-react";
+import "./StockImportPage.css";
+
+const initialRestockRows = [
+  {
+    sku: "SP001",
+    name: "Sữa tươi thanh trùng 1L",
+    supplier: "Vinamilk Mart",
+    stock: "20 hộp",
+    demand: "80 hộp",
+    qty: 60,
+    unit: "hộp",
+    priority: "Cao",
+    tone: "high",
+  },
+  {
+    sku: "SP002",
+    name: "Nước ngọt lon 330ml",
+    supplier: "Coca-Cola VN",
+    stock: "45 lon",
+    demand: "60 lon",
+    qty: 15,
+    unit: "lon",
+    priority: "Trung bình",
+    tone: "medium",
+  },
+];
+
+const markdownRows = [
+  {
+    sku: "SP003",
+    name: "Sữa chua các vị đường 100g",
+    supplier: "Khu vực: Kệ lạnh L02",
+    lot: "LOT20260901",
+    stock: "35 hũ",
+    expiry: "3 ngày",
+    discount: "-20%",
+    price: "12.000 đ",
+    oldPrice: "15.000 đ",
+  },
+];
+
+function Metric({ label, value, suffix, note, icon: Icon, color = "blue" }) {
+  return (
+    <article className="sd-metric">
+      <div className="sd-metric-copy">
+        <div className="sd-label">{label}</div>
+        <div className={`sd-value ${color === "green" ? "green" : ""}`}>
+          {value}<small>{suffix}</small>
+        </div>
+      </div>
+      <span className={`sd-icon sd-icon-${color}`}>
+        <Icon size={20} strokeWidth={2} />
+      </span>
+      <div
+        className={`sd-note ${
+          color === "orange" ? "orange" : color === "green" ? "green" : ""
+        }`}
+      >
+        {note}
+      </div>
+    </article>
+  );
+}
 
 export default function StockImportPage() {
-  const [selectedFile, setSelectedFile] = useState(null);
-  const [uploadStatus, setUploadStatus] = useState('');
+  const [notice, setNotice] = useState("");
+  const [updatedAt, setUpdatedAt] = useState("08:30");
+  const [restockRows, setRestockRows] = useState(initialRestockRows);
+  const [expandedRestock, setExpandedRestock] = useState([]);
+  const [expandedMarkdown, setExpandedMarkdown] = useState([]);
+  const [appliedRows, setAppliedRows] = useState([]);
+  const [confirmAll, setConfirmAll] = useState(false);
 
-  // Xử lý khi chọn file qua thẻ input ẩn
-  const handleFileChange = (e) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      setSelectedFile(file);
-      setUploadStatus(`Đã chọn file: ${file.name}`);
-    }
+  const refresh = () => {
+    const now = new Date();
+    setUpdatedAt(
+      now.toLocaleTimeString("vi-VN", {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    );
+    setNotice("Đã làm mới phân tích (dữ liệu mẫu).");
   };
 
-  // Xử lý nút Import hệ thống
-const handleImportSubmit = () => {
-    if (!selectedFile) {
-      alert('Vui lòng chọn tệp tin (.csv hoặc .xlsx) trước khi tiến hành Import!');
-      return;
-    }
-    
-    // Lưu lịch sử import vào localStorage để đồng bộ với Dashboard
-    const existingImports = JSON.parse(localStorage.getItem('import_history')) || [];
-    const newImport = { fileName: selectedFile.name, date: new Date().toLocaleDateString('vi-VN') };
-    localStorage.setItem('import_history', JSON.stringify([newImport, ...existingImports]));
+  const updateQty = (sku, value) => {
+    setRestockRows((rows) =>
+      rows.map((row) =>
+        row.sku === sku
+          ? { ...row, qty: Math.max(0, Number(value) || 0) }
+          : row
+      )
+    );
+  };
 
-    alert(`Thành công! Đang tải lên và xử lý tệp: ${selectedFile.name}`);
+  const toggleExpanded = (sku, setter, current) => {
+    setter(
+      current.includes(sku)
+        ? current.filter((item) => item !== sku)
+        : [...current, sku]
+    );
+  };
+
+  const createImport = (row) => {
+    setNotice(
+      `Đã chọn tạo đơn nhập cho ${row.sku} — ${row.name}, số lượng ${row.qty} ${row.unit}. Cần kết nối API để lưu đơn thực tế.`
+    );
+  };
+
+  const applyMarkdown = (row) => {
+    setAppliedRows((current) =>
+      current.includes(row.sku) ? current : [...current, row.sku]
+    );
+    setNotice(
+      `Đã chọn áp dụng giảm giá cho ${row.sku}. Cần kết nối API/POS để cập nhật giá thực tế.`
+    );
+  };
+
+  const approveAll = () => {
+    setConfirmAll(false);
+    setNotice(
+      `Đã xác nhận duyệt ${restockRows.length} đề xuất nhập hàng. Cần kết nối API để tạo đơn thực tế.`
+    );
   };
 
   return (
-    <div className="erp-panel">
-      <div className="erp-panel-title">Tải lên dữ liệu giao dịch</div>
-      <p style={{ color: '#64748b', marginBottom: '24px', fontSize: '0.95rem' }}>
-        Hệ thống sẽ phân tích tệp lịch sử bán hàng để chạy mô hình AI Dự báo nhu cầu (Demand Forecasting) và tính toán bổ sung hàng tồn kho một cách tự động.
-      </p>
+    <section className="stock-dashboard">
+      <header className="sd-header">
+        <div className="sd-header-actions">
+          <button className="sd-btn sd-btn-light" onClick={refresh}>
+            <RefreshCw size={17} />
+            Làm mới phân tích
+          </button>
+          <button
+            className="sd-btn sd-btn-primary"
+            onClick={() => setConfirmAll(true)}
+          >
+            <ClipboardList size={17} />
+            Duyệt & tạo đơn nhập tất cả
+          </button>
+        </div>
+      </header>
 
-      {/* KHU VỰC KÉO THẢ VÀ BẤM CHỌN FILE THỰC TẾ */}
-      <label style={{ 
-        display: 'block', 
-        border: '2px dashed #cbd5e1', 
-        padding: '50px 20px', 
-        textAlign: 'center', 
-        borderRadius: '12px', 
-        backgroundColor: '#f8fafc', 
-        marginBottom: '24px', 
-        cursor: 'pointer' 
-      }}>
-        <input 
-          type="file" 
-          accept=".csv, .xlsx, .xls" 
-          style={{ display: 'none' }} 
-          onChange={handleFileChange} 
+      {notice && (
+        <div className="sd-notice" role="status">
+          <span>{notice}</span>
+          <button
+            type="button"
+            aria-label="Đóng thông báo"
+            onClick={() => setNotice("")}
+          >
+            <X size={18} />
+          </button>
+        </div>
+      )}
+
+      <section className="sd-metrics">
+        <Metric
+          label="Đề xuất bổ sung hàng"
+          value="02"
+          note="Ưu tiên cao: SP001 – Sữa tươi"
+          icon={ShoppingCart}
+          color="blue"
         />
-        <div style={{ fontSize: '2.5rem', marginBottom: '12px', color: '#94a3b8' }}>📄</div>
-        <h3 style={{ margin: '0 0 8px 0', color: '#1e293b', fontSize: '1.2rem' }}>
-          {selectedFile ? selectedFile.name : 'Nhấp để chọn hoặc kéo thả file vào đây'}
-        </h3>
-        <p style={{ color: selectedFile ? '#16a34a' : '#94a3b8', margin: 0, fontSize: '0.9rem', fontWeight: selectedFile ? '600' : 'normal' }}>
-          {uploadStatus || 'Hỗ trợ định dạng .csv, .xlsx (Tối đa 10MB)'}
-        </p>
-      </label>
+        <Metric
+          label="Đề xuất giảm giá (Markdown)"
+          value="01"
+          note="Hết hạn trong 72 giờ tới"
+          icon={Percent}
+          color="orange"
+        />
+        <Metric
+          label="Dự kiến chi phí nhập"
+          value="8.500.000"
+          suffix=" đ"
+          note="Tối ưu theo chu kỳ bán hàng"
+          icon={Wallet}
+          color="blue"
+        />
+        <Metric
+          label="Dự kiến thu hồi vốn markdown"
+          value="1.250.000"
+          suffix=" đ"
+          note="Giảm thiểu rủi ro hủy hàng"
+          icon={TrendingUp}
+          color="green"
+        />
+      </section>
 
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '40px' }}>
-        <button className="erp-btn-primary" onClick={handleImportSubmit}>
-          Tiến hành Import Hệ thống
-        </button>
-      </div>
-    </header>
+      <section className="sd-panel">
+        <div className="sd-panel-head">
+          <div className="sd-title-icon blue-bg">
+            <Package size={19} />
+          </div>
+          <div className="sd-panel-heading">
+            <h2>Đề xuất bổ sung hàng (Restock)</h2>
+            <p>
+              Dựa trên dữ liệu bán hàng 30 ngày và lượng tồn kho an toàn
+            </p>
+          </div>
+          <span className="sd-updated">
+            Cập nhật: hôm nay, {updatedAt}
+          </span>
+        </div>
 
-    {notice && <div className="sd-notice" role="status">{notice}<button onClick={() => setNotice("")}>×</button></div>}
+        <div className="sd-table-wrap">
+          <table className="sd-table">
+            <thead>
+              <tr>
+                <th>SẢN PHẨM</th>
+                <th>TỒN KHO</th>
+                <th>NHU CẦU DỰ BÁO</th>
+                <th>SỐ LƯỢNG ĐỀ XUẤT</th>
+                <th>MỨC ƯU TIÊN</th>
+                <th>THAO TÁC</th>
+              </tr>
+            </thead>
+            <tbody>
+              {restockRows.map((row) => (
+                <React.Fragment key={row.sku}>
+                  <tr>
+                    <td>
+                      <div className="sd-product">
+                        <div>
+                          <strong>{row.name}</strong>
+                          <small>
+                            SKU: {row.sku} · Nhà cung cấp: {row.supplier}
+                          </small>
+                        </div>
+                      </div>
+                    </td>
+                    <td>
+                      <span className="sd-pill neutral">{row.stock}</span>
+                    </td>
+                    <td>
+                      <span className="sd-pill neutral">{row.demand}</span>
+                    </td>
+                    <td>
+                      <div className="sd-qty-control">
+                        <input
+                          type="number"
+                          min="0"
+                          aria-label={`Số lượng nhập đề xuất ${row.sku}`}
+                          value={row.qty}
+                          onChange={(e) => updateQty(row.sku, e.target.value)}
+                        />
+                        <span>{row.unit}</span>
+                      </div>
+                    </td>
+                    <td>
+                      <span className={`sd-priority ${row.tone}`}>
+                        <span className="sd-priority-dot" />
+                        {row.priority}
+                      </span>
+                    </td>
+                    <td>
+                      <div className="sd-actions">
+                        <button
+                          className="sd-btn sd-btn-soft"
+                          onClick={() =>
+                            toggleExpanded(
+                              row.sku,
+                              setExpandedRestock,
+                              expandedRestock
+                            )
+                          }
+                        >
+                          <Info size={15} />
+                          Vì sao?
+                          {expandedRestock.includes(row.sku) ? (
+                            <ChevronUp size={15} />
+                          ) : (
+                            <ChevronDown size={15} />
+                          )}
+                        </button>
+                        <button
+                          className="sd-btn sd-btn-primary sd-create"
+                          onClick={() => createImport(row)}
+                          disabled={row.qty <= 0}
+                        >
+                          <Plus size={16} />
+                          Tạo đơn nhập
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                  {expandedRestock.includes(row.sku) && (
+                    <tr className="sd-detail-row">
+                      <td colSpan="6">
+                        <div className="sd-detail-content">
+                          <Info size={17} />
+                          <div>
+                            <strong>Lý do đề xuất nhập hàng</strong>
+                            <p>
+                              Nhu cầu dự báo ({row.demand}) cao hơn lượng tồn
+                              hiện tại ({row.stock}). Đề xuất bổ sung {row.qty}{" "}
+                              {row.unit} để đáp ứng nhu cầu bán hàng dự kiến.
+                            </p>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
 
-    <section className="sd-metrics">
-      <Metric label="Đề xuất bổ sung hàng" value="02" note="!　Ưu tiên cao SP001 (Sữa tươi)" icon="🛒" color="blue"/>
-      <Metric label="Đề xuất giảm giá (Markdown)" value="01" note="▣　Hết hạn trong 72h tới" icon="％" color="orange"/>
-      <Metric label="Dự kiến chi phí nhập" value="8.500.000" suffix=" đ" note="↗　Tối ưu ROI theo chu kỳ bán" icon="▣" color="blue"/>
-      <Metric label="Dự kiến thu hồi vốn markdown" value="1.250.000" suffix=" đ" note="◉　Giảm thiểu 92% rủi ro hủy hàng" icon="♧" color="green"/>
+        <div className="sd-panel-foot">
+          <span>
+            <TrendingUp size={15} />
+            AI cân nhắc thời gian cung ứng và xu hướng mua sắm theo mùa
+          </span>
+          <span>
+            Hiển thị {restockRows.length}/{restockRows.length} đề xuất
+          </span>
+        </div>
+      </section>
+
+      <section className="sd-panel sd-markdown-panel">
+        <div className="sd-panel-head">
+          <div className="sd-title-icon red-bg">
+            <AlertTriangle size={19} />
+          </div>
+          <div className="sd-panel-heading">
+            <h2>Đề xuất giảm giá / Markdown</h2>
+            <p>
+              Giải phóng kho cho mặt hàng cận hạn hoặc có tốc độ lưu kho chậm
+            </p>
+          </div>
+          <span className="sd-alert">
+            <Clock size={15} />
+            Cần xử lý trước 24h
+          </span>
+        </div>
+
+        <div className="sd-table-wrap">
+          <table className="sd-table">
+            <thead>
+              <tr>
+                <th>SẢN PHẨM</th>
+                <th>MÃ LÔ</th>
+                <th>TỒN KHO</th>
+                <th>CÒN HẠN</th>
+                <th>GIẢM GIÁ ĐỀ XUẤT</th>
+                <th>GIÁ SAU GIẢM</th>
+                <th>THAO TÁC</th>
+              </tr>
+            </thead>
+            <tbody>
+              {markdownRows.map((row) => (
+                <React.Fragment key={row.sku}>
+                  <tr>
+                    <td>
+                      <div className="sd-product">
+                        <div>
+                          <strong>{row.name}</strong>
+                          <small>
+                            SKU: {row.sku} · {row.supplier}
+                          </small>
+                        </div>
+                      </div>
+                    </td>
+                    <td>
+                      <span className="sd-pill neutral">{row.lot}</span>
+                    </td>
+                    <td>{row.stock}</td>
+                    <td>
+                      <span className="sd-priority high">
+                        <Clock size={14} />
+                        {row.expiry}
+                      </span>
+                    </td>
+                    <td>
+                      <span className="sd-pill blue-pill">{row.discount}</span>
+                    </td>
+                    <td>
+                      <strong>{row.price}</strong>
+                      <small className="sd-old-price">{row.oldPrice}</small>
+                    </td>
+                    <td>
+                      <div className="sd-actions">
+                        <button
+                          className="sd-btn sd-btn-soft"
+                          onClick={() =>
+                            toggleExpanded(
+                              row.sku,
+                              setExpandedMarkdown,
+                              expandedMarkdown
+                            )
+                          }
+                        >
+                          <Info size={15} />
+                          Vì sao?
+                          {expandedMarkdown.includes(row.sku) ? (
+                            <ChevronUp size={15} />
+                          ) : (
+                            <ChevronDown size={15} />
+                          )}
+                        </button>
+                        <button
+                          className="sd-btn sd-btn-primary"
+                          onClick={() => applyMarkdown(row)}
+                        >
+                          {appliedRows.includes(row.sku) ? (
+                            <>
+                              <Check size={16} /> Đã chọn
+                            </>
+                          ) : (
+                            <>
+                              <Percent size={16} /> Áp dụng giảm giá
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                  {expandedMarkdown.includes(row.sku) && (
+                    <tr className="sd-detail-row">
+                      <td colSpan="7">
+                        <div className="sd-detail-content">
+                          <Info size={17} />
+                          <div>
+                            <strong>Lý do đề xuất giảm giá</strong>
+                            <p>
+                              Sản phẩm còn {row.expiry} trước hạn sử dụng.
+                              Mức giảm {row.discount} giúp thúc đẩy tiêu thụ
+                              và hạn chế hàng phải hủy.
+                            </p>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {confirmAll && (
+        <div
+          className="sd-modal-backdrop"
+          role="presentation"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setConfirmAll(false);
+          }}
+        >
+          <div
+            className="sd-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="sd-modal-title"
+          >
+            <div className="sd-modal-icon">
+              <ClipboardList size={23} />
+            </div>
+            <h2 id="sd-modal-title">Xác nhận duyệt tất cả?</h2>
+            <p>
+              Bạn đang chọn duyệt {restockRows.length} đề xuất nhập hàng.
+              Hãy kiểm tra số lượng trước khi tiếp tục.
+            </p>
+            <div className="sd-modal-actions">
+              <button
+                className="sd-btn sd-btn-light"
+                onClick={() => setConfirmAll(false)}
+              >
+                Hủy
+              </button>
+              <button
+                className="sd-btn sd-btn-primary"
+                onClick={approveAll}
+              >
+                Xác nhận duyệt
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
-
-    <section className="sd-panel">
-      <div className="sd-panel-head">
-        <div className="sd-title-icon blue-bg">▣</div>
-        <div><h2>Đề xuất bổ sung hàng (Restock)</h2><p>Được tạo tự động theo dữ liệu bán hàng 30 ngày qua và lượng tồn an toàn</p></div>
-        <span className="sd-updated">Cập nhật: hôm nay, {updatedAt}</span>
-      </div>
-      <div className="sd-table-wrap">
-        <table className="sd-table">
-          <thead><tr><th>SẢN PHẨM</th><th>TỒN KHO</th><th>NHU CẦU<br/>DỰ BÁO</th><th>SỐ LƯỢNG<br/>ĐỀ XUẤT</th><th>MỨC ƯU TIÊN</th><th>THAO TÁC</th></tr></thead>
-          <tbody>{restockRows.map(row => <tr key={row.sku}>
-            <td><div className="sd-product"><span className={`sd-sku ${row.tone}`}>{row.sku}</span><div><strong>{row.sku} - {row.name}</strong><small>Nhà cung cấp: {row.supplier}</small></div></div></td>
-            <td><span className="sd-pill neutral">{row.stock}</span></td><td><span className="sd-pill neutral">{row.demand}</span></td><td><span className="sd-pill blue-pill">{row.qty}</span></td>
-            <td><span className={`sd-priority ${row.tone}`}>● {row.priority}</span></td>
-            <td><div className="sd-actions"><button className="sd-btn sd-btn-soft" onClick={() => setNotice(`Giải thích đề xuất ${row.sku}: nhu cầu dự báo cao hơn tồn kho hiện tại.`)}>ⓘ Vì sao đề xuất?</button><button className="sd-btn sd-btn-primary sd-create" onClick={() => createImport(row)}>＋ Tạo đơn nhập</button></div></td>
-          </tr>)}</tbody>
-        </table>
-      </div>
-      <div className="sd-panel-foot"><span>✣　Công thức AI cân nhắc: Lead time nhà cung ứng + Xu hướng mua sắm theo mùa</span><span>Hiển thị 2/2 đề xuất</span></div>
-    </section>
-
-    <section className="sd-panel sd-markdown-panel">
-      <div className="sd-panel-head">
-        <div className="sd-title-icon red-bg">◇</div>
-        <div><h2>Đề xuất giảm giá / Markdown</h2><p>Giải phóng kho cho các mặt hàng cận hạn sử dụng hoặc tốc độ lưu kho chậm</p></div>
-        <span className="sd-alert">⚠ Cần xử lý trước 24h</span>
-      </div>
-      <div className="sd-table-wrap">
-        <table className="sd-table">
-          <thead><tr><th>SẢN PHẨM</th><th>MÃ LÔ</th><th>TỒN KHO</th><th>CÒN HẠN</th><th>GIẢM GIÁ<br/>ĐỀ XUẤT</th><th>GIÁ SAU<br/>GIẢM</th><th>THAO TÁC</th></tr></thead>
-          <tbody>{markdownRows.map(row => <tr key={row.sku}>
-            <td><div className="sd-product"><span className="sd-sku pink">{row.sku}</span><div><strong>{row.sku} - {row.name}</strong><small>{row.supplier}</small></div></div></td>
-            <td><span className="sd-pill neutral">{row.lot}</span></td><td>{row.stock}</td><td><span className="sd-priority high">◷ {row.expiry}</span></td><td><span className="sd-pill red-pill">{row.discount}</span></td>
-            <td><strong>{row.price}</strong><small className="sd-old-price">{row.oldPrice}</small></td>
-            <td><div className="sd-actions"><button className="sd-btn sd-btn-soft" onClick={() => setNotice(`Sản phẩm ${row.sku} còn ${row.expiry}; giảm ${row.discount} để hạn chế hàng hủy.`)}>ⓘ Vì sao đề xuất?</button><button className={`sd-btn ${applied ? "sd-btn-primary" : "sd-btn-danger"}`} onClick={() => applyMarkdown(row)}>{applied ? "✓ Đã chọn" : "◇ Áp dụng giảm giá"}</button></div></td>
-          </tr>)}</tbody>
-        </table>
-      </div>
-    </section>
-  </main>;
+  );
 }
