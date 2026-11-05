@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import SettingsPage from './SettingsPage';
+import EmployeeManagementPage from './EmployeeManagementPage';
 import {
   CalendarClock,
   LogOut,
@@ -15,7 +17,6 @@ import StockTransactionsPage from './StockTransactionsPage';
 import StockImportPage from './StockImportPage';
 import './Dashboard.css';
 
-// Đã loại bỏ icon khỏi danh sách menu
 const menuItems = [
   { id: 'dashboard', title: 'Dashboard' },
   { id: 'inventory', title: 'Sản phẩm' },
@@ -31,10 +32,10 @@ const menuItems = [
     title: 'Đề xuất nhập hàng',
     roles: ['Admin', 'Store Manager'],
   },
+  { id: 'employees', title: 'Quản lý Nhân sự', roles: ['Admin'] }, // Chỉ Admin thấy
   {
     id: 'settings',
     title: 'Cài đặt hệ thống',
-    roles: ['Admin'],
   },
 ];
 
@@ -46,6 +47,7 @@ const menuTitles = {
   sales_history: 'Lịch sử bán hàng',
   ai_assistant: 'Trợ lý AI Phân tích & Dự báo Kho',
   recommendation: 'Đề xuất nhập hàng',
+  employees: 'Quản lý Nhân sự & Phân quyền',
   settings: 'Cài đặt Hệ thống',
 };
 
@@ -85,7 +87,6 @@ export default function Dashboard({ role, onLogout }) {
 
       <aside className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
         <div className="sidebar-header">
-          {/* Đã xóa icon logo, chỉ giữ tên thương hiệu */}
           <div className="brand-info">
             <span className="brand-name">Nhập Xuất Tồn</span>
           </div>
@@ -112,7 +113,6 @@ export default function Dashboard({ role, onLogout }) {
                 onClick={() => handleMenuClick(item.id)}
                 aria-current={isActive ? 'page' : undefined}
               >
-                {/* Đã xóa icon menu */}
                 <span className="sidebar-item-title">{item.title}</span>
 
                 {isActive && (
@@ -208,14 +208,19 @@ export default function Dashboard({ role, onLogout }) {
             </div>
           )}
 
-          {safeActiveMenu === 'settings' && (
-            <div className="dashboard-placeholder">
-              <h2>Cài đặt hệ thống</h2>
-              <p>
-                Quản lý phân quyền, cấu hình thông báo và kết nối cơ sở dữ liệu.
-              </p>
-            </div>
+          {/* LỚP BẢO VỆ (GUARD) CHẶN TRUY CẬP TRÁI PHÉP VÀO TRANG NHÂN SỰ */}
+          {safeActiveMenu === 'employees' && (
+            normalizedRole === 'Admin' ? (
+              <EmployeeManagementPage />
+            ) : (
+              <div style={{ background: 'white', padding: '40px', borderRadius: '12px', textAlign: 'center', border: '1px solid #fee2e2' }}>
+                <h3 style={{ color: '#dc2626', margin: '0 0 10px 0' }}>403 - Truy cập bị từ chối</h3>
+                <p style={{ color: '#64748b', margin: 0 }}>Tài khoản của bạn ({normalizedRole}) không có quyền quản trị để truy cập phân hệ Quản lý nhân sự.</p>
+              </div>
+            )
           )}
+
+          {safeActiveMenu === 'settings' && <SettingsPage />}
         </main>
       </div>
     </div>

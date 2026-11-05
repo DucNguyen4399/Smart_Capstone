@@ -6,12 +6,13 @@ export default function RegisterPage({ onSwitchToLogin }) {
     email: '',
     password: '',
     confirmPassword: '',
-    role_id: '3' // Mặc định là Store Staff hoặc nhân viên kho
+    phone: '',
+    fullname: ''
   });
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
-  const handleRegister = async (e) => {
+  const handleRegister = (e) => {
     e.preventDefault();
     setErrorMsg('');
     setSuccessMsg('');
@@ -22,16 +23,38 @@ export default function RegisterPage({ onSwitchToLogin }) {
     }
 
     try {
-      // Giả lập gọi API đăng ký (Bạn có thể trỏ tới API tương ứng ở Backend nếu đã viết)
-      // Tạm thời hiển thị thông báo thành công chuyên nghiệp
+      // Lấy danh sách user hiện tại từ localStorage
+      const existingUsers = JSON.parse(localStorage.getItem('erp_users')) || [];
+      
+      // Kiểm tra trùng lặp username hoặc email
+      const duplicate = existingUsers.find(u => u.username === formData.username || u.email === formData.email);
+      if (duplicate) {
+        setErrorMsg("Tên đăng nhập hoặc Email này đã tồn tại trong hệ thống!");
+        return;
+      }
+
+      const newMaNV = `NV-00${existingUsers.length + 1}`;
+      const newUser = {
+        id: Date.now(),
+        maNV: newMaNV,
+        fullname: formData.fullname || formData.username,
+        username: formData.username,
+        password: formData.password,
+        email: formData.email,
+        phone: formData.phone || '0900000000',
+        role: 'Store Staff', // CỐ ĐỊNH: Tài khoản tự đăng ký luôn là nhân viên kho, ngăn chặn leo thang Admin
+        status: 'Hoạt động'
+      };
+
+      existingUsers.push(newUser);
+      localStorage.setItem('erp_users', JSON.stringify(existingUsers));
+
+      setSuccessMsg("Đăng ký tài khoản thành công! Quyền hệ thống: Store Staff. Đang chuyển hướng...");
       setTimeout(() => {
-        setSuccessMsg("Đăng ký tài khoản thành công! Đang chuyển hướng về trang đăng nhập...");
-        setTimeout(() => {
-          onSwitchToLogin();
-        }, 1500);
-      }, 800);
+        onSwitchToLogin();
+      }, 1500);
     } catch (err) {
-      setErrorMsg("Lỗi kết nối máy chủ đăng ký.");
+      setErrorMsg("Lỗi lưu trữ dữ liệu đăng ký.");
     }
   };
 
@@ -73,11 +96,23 @@ export default function RegisterPage({ onSwitchToLogin }) {
 
           <form onSubmit={handleRegister}>
             <div className="auth-form-group">
+              <label>Họ và tên</label>
+              <input 
+                type="text" 
+                className="auth-input" 
+                placeholder="Nguyễn Văn A" 
+                required
+                value={formData.fullname}
+                onChange={(e) => setFormData({...formData, fullname: e.target.value})}
+              />
+            </div>
+
+            <div className="auth-form-group">
               <label>Tên tài khoản (Username)</label>
               <input 
                 type="text" 
                 className="auth-input" 
-                placeholder="VD: manager_store01" 
+                placeholder="VD: staff_store01" 
                 required
                 value={formData.username}
                 onChange={(e) => setFormData({...formData, username: e.target.value})}
@@ -93,6 +128,18 @@ export default function RegisterPage({ onSwitchToLogin }) {
                 required
                 value={formData.email}
                 onChange={(e) => setFormData({...formData, email: e.target.value})}
+              />
+            </div>
+
+            <div className="auth-form-group">
+              <label>Số điện thoại</label>
+              <input 
+                type="text" 
+                className="auth-input" 
+                placeholder="0901234567" 
+                required
+                value={formData.phone}
+                onChange={(e) => setFormData({...formData, phone: e.target.value})}
               />
             </div>
 

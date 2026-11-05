@@ -1,4 +1,3 @@
-
 :root {
   --dashboard-primary: #5145e5;
   --dashboard-primary-light: #eeecff;
@@ -313,8 +312,29 @@
 }
 
 /* ==================================================
-   DASHBOARD LAYOUT
+   DASHBOARD LAYOUT & CARD COLOR UNIFORMITY
    ================================================== */
+
+/* Đồng bộ toàn bộ các thẻ card thống kê và panel về chung nền trắng viền xám tinh tế */
+.erp-kpi-card,
+.erp-panel,
+.sales-stat {
+  background: #ffffff !important;
+  border: 1px solid #e2e8f0 !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+  border-radius: 12px !important;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05) !important;
+}
+
+.erp-kpi-card::after,
+.erp-panel::after,
+.sales-stat::after {
+  display: none !important;
+}
+
+.erp-kpi-card.active-card {
+  border-color: #cbd5e1 !important;
+}
 
 /* Giữ dashboard trong chiều rộng vùng nội dung */
 .dashboard-overview,
@@ -344,6 +364,7 @@
   min-width: 0;
   margin: 0;
   box-sizing: border-box;
+  padding: 20px;
 }
 
 /* CỘT BIỂU ĐỒ + CỘT HOẠT ĐỘNG */
@@ -359,9 +380,7 @@
   min-width: 0;
 }
 
-/* TẤT CẢ BIỂU ĐỒ DÙNG CHUNG MỘT GRID
-   Lưu ý: JSX phải có .dashboard-chart-grid
-   bao quanh tất cả các .erp-panel biểu đồ. */
+/* TẤT CẢ BIỂU ĐỒ DÙNG CHUNG MỘT GRID */
 .dashboard-chart-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -375,6 +394,7 @@
   margin: 0;
   box-sizing: border-box;
   overflow: hidden;
+  padding: 20px;
 }
 
 /* Container biểu đồ co theo panel */
@@ -397,6 +417,7 @@
   min-width: 0;
   margin: 0;
   box-sizing: border-box;
+  padding: 20px;
 }
 
 /* Chặn phần tử con gây tràn ngang */
