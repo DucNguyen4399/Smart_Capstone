@@ -30,10 +30,21 @@ async function apiFetch(path, options = {}) {
     if (res.status === 401) {
       throw new Error('Phiên đăng nhập hết hạn hoặc token không hợp lệ.');
     }
+
     if (res.status === 403) {
       throw new Error('Tài khoản không có quyền thực hiện thao tác này.');
     }
-    throw new Error(data?.detail || `Lỗi API (${res.status})`);
+
+    const detail = data?.detail;
+
+    const errorMessage =
+      typeof detail === 'string'
+        ? detail
+        : detail
+          ? JSON.stringify(detail)
+          : `Lỗi API (${res.status})`;
+
+    throw new Error(errorMessage);
   }
 
   return data;
@@ -66,10 +77,17 @@ const statusText = (status) => {
   return map[status] || status || '—';
 };
 
-export default function StockTransactionsPage() {
+export default function StockTransactionsPage({ role }) {
+  const normalizedRole = String(role || '').trim();
+  const canConfirmReceipt = ['Admin', 'Store Manager'].includes(normalizedRole);
+  const canConfirmIssue = ['Admin', 'Store Manager', 'Store Staff'].includes(normalizedRole);
+  const canReviewFefo = ['Admin', 'Store Manager'].includes(normalizedRole);
   const [activeTab, setActiveTab] = useState('receipt');
   const [receipts, setReceipts] = useState([]);
   const [issues, setIssues] = useState([]);
+  const [fefoExceptions, setFefoExceptions] = useState([]);
+  const [loadingExceptions, setLoadingExceptions] = useState(false);
+  const [reviewingException, setReviewingException] = useState(false);
   const [products, setProducts] = useState([]);
   const [batches, setBatches] = useState([]);
 
@@ -98,7 +116,16 @@ export default function StockTransactionsPage() {
     recipient: '',
     reason: '',
     note: '',
-    details: [{ batch_id: '', quantity: 1 }],
+    details: [{
+      product_id: '',
+      quantity: 1,
+      useException: false,
+      requested_batch_id: '',
+      requested_cost_lot_id: '',
+      exception_reason: '',
+      availableLots: [],
+      loadingLots: false,
+    }],
   });
 
   const [selectedReceipt, setSelectedReceipt] = useState(null);
@@ -127,6 +154,7 @@ export default function StockTransactionsPage() {
       setLoading(false);
     }
   }, []);
+  
 
   useEffect(() => {
     loadData();
@@ -136,7 +164,54 @@ export default function StockTransactionsPage() {
     setErrorMsg('');
     setSuccessMsg('');
   };
+  const loadFefoExceptions = async () => {
+    setLoadingExceptions(true);
+    setErrorMsg('');
 
+    try {
+      const data = await apiFetch('/fefo-exceptions');
+      console.log('FEFO exceptions:', data);
+
+      setFefoExceptions(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setErrorMsg(err.message);
+    } finally {
+      setLoadingExceptions(false);
+    }
+  };
+  const reviewFefoException = async (requestId, action) => {
+    const actionText = action === 'approve' ? 'duyệt' : 'từ chối';
+
+    if (!window.confirm(`Bạn có chắc muốn ${actionText} yêu cầu này?`)) {
+      return;
+    }
+
+    setReviewingException(true);
+    resetMessages();
+
+    try {
+      await apiFetch(`/fefo-exceptions/${requestId}/${action}`, {
+        method: 'POST',
+        body: JSON.stringify({
+          review_note: action === 'approve'
+            ? 'Đã duyệt yêu cầu ngoại lệ FEFO.'
+            : 'Từ chối yêu cầu ngoại lệ FEFO.',
+        }),
+      });
+
+      setSuccessMsg(
+        action === 'approve'
+          ? 'Đã duyệt yêu cầu ngoại lệ FEFO.'
+          : 'Đã từ chối yêu cầu ngoại lệ FEFO.'
+      );
+
+      await loadFefoExceptions();
+    } catch (err) {
+      setErrorMsg(err.message);
+    } finally {
+      setReviewingException(false);
+    }
+  };
   const updateReceiptDetail = (index, field, value) => {
     setReceiptForm((prev) => ({
       ...prev,
@@ -175,11 +250,72 @@ export default function StockTransactionsPage() {
       ),
     }));
   };
+  const loadIssueableLots = async (index, productId) => {
+  if (!productId) {
+    setIssueForm((prev) => ({
+      ...prev,
+      details: prev.details.map((item, i) =>
+        i === index
+          ? {
+              ...item,
+              product_id: '',
+              availableLots: [],
+              loadingLots: false,
+              requested_batch_id: '',
+              requested_cost_lot_id: '',
+              exception_reason: '',
+            }
+          : item
+      ),
+    }));
+    return;
+  }
+
+  updateIssueDetail(index, 'product_id', productId);
+  updateIssueDetail(index, 'loadingLots', true);
+  updateIssueDetail(index, 'availableLots', []);
+  updateIssueDetail(index, 'requested_batch_id', '');
+  updateIssueDetail(index, 'requested_cost_lot_id', '');
+
+  try {
+    const data = await apiFetch(
+      `/products/${productId}/issueable-cost-lots`
+    );
+
+    setIssueForm((prev) => ({
+      ...prev,
+      details: prev.details.map((item, i) =>
+        i === index
+          ? {
+              ...item,
+              availableLots: data.lots || [],
+              loadingLots: false,
+            }
+          : item
+      ),
+    }));
+  } catch (err) {
+    setErrorMsg(err.message);
+    updateIssueDetail(index, 'loadingLots', false);
+  }
+};
 
   const addIssueDetail = () => {
     setIssueForm((prev) => ({
       ...prev,
-      details: [...prev.details, { batch_id: '', quantity: 1 }],
+      details: [
+        ...prev.details,
+        {
+          product_id: '',
+          quantity: 1,
+          useException: false,
+          requested_batch_id: '',
+          requested_cost_lot_id: '',
+          exception_reason: '',
+          availableLots: [],
+          loadingLots: false,
+        },
+      ],
     }));
   };
 
@@ -210,13 +346,10 @@ export default function StockTransactionsPage() {
 
     if (details.some((item) =>
       !item.product_id ||
-      !item.batch_number ||
-      !item.import_date ||
-      !item.expiry_date ||
-      item.quantity <= 0 ||
-      item.expiry_date < item.import_date
+      !Number.isInteger(item.quantity) ||
+      item.quantity <= 0
     )) {
-      setErrorMsg('Kiểm tra sản phẩm, mã lô, ngày nhập, hạn dùng và số lượng.');
+      setErrorMsg('Vui lòng chọn sản phẩm và nhập số lượng nguyên dương.');
       return;
     }
 
@@ -260,36 +393,43 @@ export default function StockTransactionsPage() {
     resetMessages();
 
     if (!issueForm.details.length) {
-      setErrorMsg('Phiếu xuất phải có ít nhất một lô hàng.');
+      setErrorMsg('Phiếu xuất phải có ít nhất một sản phẩm.');
       return;
     }
 
     const details = issueForm.details.map((item) => ({
-      batch_id: Number(item.batch_id),
+      product_id: Number(item.product_id),
       quantity: Number(item.quantity),
+      ...(item.useException
+        ? {
+            requested_batch_id: Number(item.requested_batch_id),
+            requested_cost_lot_id: Number(item.requested_cost_lot_id),
+            exception_reason: item.exception_reason.trim(),
+          }
+        : {}),
     }));
 
     if (details.some((item) =>
-      !item.batch_id || !Number.isInteger(item.quantity) || item.quantity <= 0
+      !item.product_id ||
+      !Number.isInteger(item.quantity) ||
+      item.quantity <= 0
     )) {
-      setErrorMsg('Chọn lô hàng và nhập số lượng xuất là số nguyên dương.');
+      setErrorMsg('Chọn sản phẩm và nhập số lượng xuất là số nguyên dương.');
+      return;
+    }
+    if (issueForm.details.some((item) =>
+      item.useException && (
+        !item.requested_batch_id ||
+        !item.requested_cost_lot_id ||
+        !item.exception_reason.trim()
+      )
+    )) {
+      setErrorMsg('Vui lòng chọn cost lot và nhập lý do ngoại lệ FEFO.');
       return;
     }
 
-    const totals = {};
-    details.forEach((item) => {
-      totals[item.batch_id] = (totals[item.batch_id] || 0) + item.quantity;
-    });
-
-    for (const [batchId, quantity] of Object.entries(totals)) {
-      const batch = batches.find((item) => Number(item.id) === Number(batchId));
-      if (!batch || quantity > Number(batch.current_qty)) {
-        setErrorMsg(`Lô ID ${batchId} không đủ tồn kho hiện tại.`);
-        return;
-      }
-    }
-
     setSaving(true);
+
     try {
       await apiFetch('/issues', {
         method: 'POST',
@@ -303,52 +443,26 @@ export default function StockTransactionsPage() {
         }),
       });
 
-      setSuccessMsg('Đã tạo phiếu xuất nháp. Xác nhận phiếu để trừ tồn kho.');
+      setSuccessMsg('Đã tạo phiếu xuất nháp. Xác nhận phiếu để hệ thống tự chọn lô theo FEFO.');
+
       setIssueForm({
         issue_code: newCode('PX'),
         issue_date: today(),
         recipient: '',
         reason: '',
         note: '',
-        details: [{ batch_id: '', quantity: 1 }],
+        details: [{
+          product_id: '',
+          quantity: 1,
+          useException: false,
+          requested_batch_id: '',
+          requested_cost_lot_id: '',
+          exception_reason: '',
+          availableLots: [],
+          loadingLots: false,
+        }],
       });
 
-      await loadData();
-    } catch (err) {
-      setErrorMsg(err.message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const confirmTransaction = async (type, item) => {
-    resetMessages();
-
-    if (item.status !== 'DRAFT') {
-      setErrorMsg('Chỉ có thể xác nhận phiếu đang ở trạng thái nháp.');
-      return;
-    }
-
-    const ok = window.confirm(
-      `Xác nhận ${type === 'receipt' ? 'phiếu nhập' : 'phiếu xuất'} ${item.receipt_code || item.issue_code || item.id}?`
-    );
-    if (!ok) return;
-
-    setSaving(true);
-    try {
-      if (type === 'receipt') {
-        await apiFetch(`/receipts/${item.id ?? item.receipt_id}/confirm`, {
-          method: 'POST',
-        });
-      } else {
-        await apiFetch(`/issues/${item.id ?? item.issue_id}/confirm`, {
-          method: 'POST',
-        });
-      }
-
-      setSuccessMsg('Xác nhận phiếu thành công.');
-      setSelectedReceipt(null);
-      setSelectedIssue(null);
       await loadData();
     } catch (err) {
       setErrorMsg(err.message);
@@ -380,6 +494,56 @@ export default function StockTransactionsPage() {
       setErrorMsg(err.message);
     }
   };
+    const confirmTransaction = async (type, item) => {
+    resetMessages();
+
+    if (item.status !== 'DRAFT') {
+      setErrorMsg('Chỉ có thể xác nhận phiếu đang ở trạng thái nháp.');
+      return;
+    }
+
+    if (type === 'receipt' && !canConfirmReceipt) {
+      setErrorMsg('Chỉ Admin hoặc Store Manager được xác nhận phiếu nhập.');
+      return;
+    }
+
+    if (type === 'issue' && !canConfirmIssue) {
+      setErrorMsg('Tài khoản không có quyền xác nhận phiếu xuất.');
+      return;
+    }
+
+    const id = type === 'receipt'
+      ? (item.id ?? item.receipt_id)
+      : (item.id ?? item.issue_id);
+
+    const code = item.receipt_code || item.issue_code || id;
+
+    if (!window.confirm(
+      `Xác nhận ${type === 'receipt' ? 'phiếu nhập' : 'phiếu xuất'} ${code}?`
+    )) {
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      await apiFetch(
+        type === 'receipt'
+          ? `/receipts/${id}/confirm`
+          : `/issues/${id}/confirm`,
+        { method: 'POST' }
+      );
+
+      setSuccessMsg('Xác nhận phiếu thành công.');
+      setSelectedReceipt(null);
+      setSelectedIssue(null);
+      await loadData();
+    } catch (err) {
+      setErrorMsg(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const receiptDraftTotal = receiptForm.details.reduce(
     (sum, line) => sum + (Number(line.quantity) || 0) * (Number(line.unit_cost) || 0), 0
@@ -395,92 +559,152 @@ export default function StockTransactionsPage() {
   );
 
   const renderReceiptTable = (items) => (
-    <div className="stock-table-wrap">
-      <table className="stock-table">
-        <thead>
-          <tr>
-            <th>Mã phiếu</th>
-            <th>Nhà cung cấp</th>
-            <th>Ngày tạo</th>
-            <th>Trạng thái</th>
-            <th>Thao tác</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.length ? items.map((item) => (
-            <tr key={item.id ?? item.receipt_id}>
-              <td>{item.receipt_code || '—'}</td>
-              <td>{item.supplier_name || '—'}</td>
-              <td>{dateText(item.created_at || item.receipt_date)}</td>
-              <td>{renderStatus(item)}</td>
-              <td className="stock-actions">
-                <button type="button" className="erp-btn" onClick={() => showReceiptDetail(item)}>
-                  Chi tiết
-                </button>
-                {item.status === 'DRAFT' && (
+  <div className="stock-table-wrap">
+    <table className="stock-table">
+      <thead>
+        <tr>
+          <th>Mã phiếu</th>
+          <th>Nhà cung cấp</th>
+          <th>Ngày tạo</th>
+          <th>Trạng thái</th>
+          <th>Thao tác</th>
+        </tr>
+      </thead>
+
+      <tbody>
+        {items.length ? items.map((item) => {
+          const itemId = item.id ?? item.receipt_id;
+          const detailId = selectedReceipt?.id ?? selectedReceipt?.receipt_id;
+          const isSelected = String(itemId) === String(detailId);
+
+          return (
+            <React.Fragment key={itemId}>
+              <tr>
+                <td>{item.receipt_code || '—'}</td>
+                <td>{item.supplier_name || '—'}</td>
+                <td>{dateText(item.created_at || item.receipt_date)}</td>
+                <td>{renderStatus(item)}</td>
+                <td className="stock-actions">
                   <button
                     type="button"
-                    className="erp-btn erp-btn-primary"
-                    disabled={saving}
-                    onClick={() => confirmTransaction('receipt', item)}
+                    className="erp-btn"
+                    onClick={() => {
+                      if (isSelected) {
+                        setSelectedReceipt(null);
+                      } else {
+                        showReceiptDetail(item);
+                      }
+                    }}
                   >
-                    Xác nhận
+                    {isSelected ? 'Ẩn chi tiết' : 'Chi tiết'}
                   </button>
-                )}
-              </td>
-            </tr>
-          )) : (
-            <tr><td colSpan="5">Chưa có phiếu nhập.</td></tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
+
+                  {item.status === 'DRAFT' && canConfirmReceipt && (
+                    <button
+                      type="button"
+                      className="erp-btn erp-btn-primary"
+                      disabled={saving}
+                      onClick={() => confirmTransaction('receipt', item)}
+                    >
+                      Xác nhận
+                    </button>
+                  )}
+                </td>
+              </tr>
+
+              {isSelected && (
+                <tr className="stock-inline-detail-row">
+                  <td colSpan="5">
+                    {renderDetails(selectedReceipt, 'receipt')}
+                  </td>
+                </tr>
+              )}
+            </React.Fragment>
+          );
+        }) : (
+          <tr>
+            <td colSpan="5">Chưa có phiếu nhập.</td>
+          </tr>
+        )}
+      </tbody>
+    </table>
+  </div>
+);
 
   const renderIssueTable = (items) => (
-    <div className="stock-table-wrap">
-      <table className="stock-table">
-        <thead>
-          <tr>
-            <th>Mã phiếu</th>
-            <th>Người nhận</th>
-            <th>Lý do</th>
-            <th>Ngày xuất</th>
-            <th>Trạng thái</th>
-            <th>Thao tác</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.length ? items.map((item) => (
-            <tr key={item.id ?? item.issue_id}>
-              <td>{item.issue_code || '—'}</td>
-              <td>{item.recipient || '—'}</td>
-              <td>{item.reason || '—'}</td>
-              <td>{dateText(item.issue_date || item.created_at)}</td>
-              <td>{renderStatus(item)}</td>
-              <td className="stock-actions">
-                <button type="button" className="erp-btn" onClick={() => showIssueDetail(item)}>
-                  Chi tiết
-                </button>
-                {item.status === 'DRAFT' && (
+  <div className="stock-table-wrap">
+    <table className="stock-table">
+      <thead>
+        <tr>
+          <th>Mã phiếu</th>
+          <th>Người nhận</th>
+          <th>Lý do</th>
+          <th>Ngày xuất</th>
+          <th>Trạng thái</th>
+          <th>Thao tác</th>
+        </tr>
+      </thead>
+
+      <tbody>
+        {items.length ? items.map((item) => {
+          const itemId = item.id ?? item.issue_id;
+          const detailId = selectedIssue?.id ?? selectedIssue?.issue_id;
+          const isSelected = String(itemId) === String(detailId);
+
+          return (
+            <React.Fragment key={itemId}>
+              <tr>
+                <td>{item.issue_code || '—'}</td>
+                <td>{item.recipient || '—'}</td>
+                <td>{item.reason || '—'}</td>
+                <td>{dateText(item.issue_date || item.created_at)}</td>
+                <td>{renderStatus(item)}</td>
+                <td className="stock-actions">
                   <button
                     type="button"
-                    className="erp-btn erp-btn-primary"
-                    disabled={saving}
-                    onClick={() => confirmTransaction('issue', item)}
+                    className="erp-btn"
+                    onClick={() => {
+                      if (isSelected) {
+                        setSelectedIssue(null);
+                      } else {
+                        showIssueDetail(item);
+                      }
+                    }}
                   >
-                    Xác nhận
+                    {isSelected ? 'Ẩn chi tiết' : 'Chi tiết'}
                   </button>
-                )}
-              </td>
-            </tr>
-          )) : (
-            <tr><td colSpan="6">Chưa có phiếu xuất.</td></tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
+
+                  {item.status === 'DRAFT' && canConfirmIssue && (
+                    <button
+                      type="button"
+                      className="erp-btn erp-btn-primary"
+                      disabled={saving}
+                      onClick={() => confirmTransaction('issue', item)}
+                    >
+                      Xác nhận
+                    </button>
+                  )}
+                </td>
+              </tr>
+
+              {isSelected && (
+                <tr className="stock-inline-detail-row">
+                  <td colSpan="6">
+                    {renderDetails(selectedIssue, 'issue')}
+                  </td>
+                </tr>
+              )}
+            </React.Fragment>
+          );
+        }) : (
+          <tr>
+            <td colSpan="6">Chưa có phiếu xuất.</td>
+          </tr>
+        )}
+      </tbody>
+    </table>
+  </div>
+);
 
   const renderDetails = (data, type) => {
     if (!data) return null;
@@ -512,25 +736,50 @@ export default function StockTransactionsPage() {
           <table className="stock-table">
             <thead>
               <tr>
-                <th>Sản phẩm / Lô</th>
+                <th>Sản phẩm / Lô thực tế</th>
                 <th>Số lượng</th>
-                {type === 'receipt' && <th>Đơn giá</th>}
+                {type === 'receipt' && <th>Đơn giá nhập</th>}
+                {type === 'issue' && (
+                  <>
+                    <th>Đơn giá vốn</th>
+                    <th>Thành tiền</th>
+                  </>
+                )}
               </tr>
             </thead>
             <tbody>
               {details.length ? details.map((line, index) => (
-                <tr key={line.id ?? index}>
+                <tr key={line.detail_id ?? line.id ?? index}>
                   <td>
-                    {line.product_name || line.product_sku || ''}
+                    {line.product_name || line.product_sku || '—'}
                     {line.batch_number ? ` — ${line.batch_number}` : ''}
                     {line.batch_id ? ` — Lô ID ${line.batch_id}` : ''}
                   </td>
+
                   <td>{line.quantity ?? '—'}</td>
-                  {type === 'receipt' && <td>{money(line.unit_cost)}</td>}
+
+                  {type === 'receipt' && (
+                    <td>{money(line.unit_cost)} ₫</td>
+                  )}
+
+                  {type === 'issue' && (
+                    <>
+                      <td>
+                        {line.unit_cost != null
+                          ? `${money(line.unit_cost)} ₫`
+                          : '—'}
+                      </td>
+                      <td>
+                        {line.total_cost != null
+                          ? `${money(line.total_cost)} ₫`
+                          : 'Chưa xác nhận'}
+                      </td>
+                    </>
+                  )}
                 </tr>
               )) : (
                 <tr>
-                  <td colSpan={type === 'receipt' ? 3 : 2}>
+                  <td colSpan={type === 'receipt' ? 3 : 4}>
                     API không trả về chi tiết phiếu.
                   </td>
                 </tr>
@@ -539,7 +788,9 @@ export default function StockTransactionsPage() {
           </table>
         </div>
 
-        {data.status === 'DRAFT' && (
+        {data.status === 'DRAFT' &&
+          ((type === 'receipt' && canConfirmReceipt) ||
+          (type === 'issue' && canConfirmIssue)) && (
           <button
             type="button"
             className="erp-btn erp-btn-primary"
@@ -569,7 +820,7 @@ export default function StockTransactionsPage() {
           <div><span className="stock-summary-label">Tổng phiếu xuất</span><strong>{issues.length}</strong><small>{draftIssueCount} phiếu đang nháp</small></div>
         </article>
         <article className="stock-summary-card">
-          <div><span className="stock-summary-label">Lô còn hàng</span><strong>{issueableBatchCount}</strong><small>Có thể chọn để xuất</small></div>
+          <div><span className="stock-summary-label">Lô còn hàng</span><strong>{issueableBatchCount}</strong><small>Có tồn kho để hệ thống phân bổ FEFO</small></div>
         </article>
         <article className="stock-summary-card">
           <div><span className="stock-summary-label">Giá trị phiếu nhập hiện tại</span><strong>{money(receiptDraftTotal)} ₫</strong><small>Tính theo biểu mẫu đang nhập</small></div>
@@ -598,6 +849,19 @@ export default function StockTransactionsPage() {
         >
           Lịch sử phiếu
         </button>
+        {canReviewFefo && (
+          <button
+            type="button"
+            className={`erp-btn ${activeTab === 'fefo' ? 'erp-btn-primary' : ''}`}
+            onClick={() => {
+              setActiveTab('fefo');
+              resetMessages();
+              loadFefoExceptions();
+            }}
+          >
+            Duyệt ngoại lệ FEFO
+          </button>
+        )}
       </div>
       
 
@@ -606,7 +870,7 @@ export default function StockTransactionsPage() {
 
       {activeTab === 'receipt' && (
         <section className="stock-section">
-          <div className="stock-section-heading"><div><span className="stock-section-kicker">PHIẾU NHẬP</span><h2>Tạo phiếu nhập kho</h2><p>Ghi nhận hàng hóa nhập vào và ngày hết hạn của từng lô.</p></div><span className="stock-step-badge">01</span></div>
+          <div className="stock-section-heading"><div><span className="stock-section-kicker">PHIẾU NHẬP</span><h2>Tạo phiếu nhập kho</h2></div><span className="stock-step-badge">01</span></div>
           <form onSubmit={handleCreateReceipt}>
             <div className="stock-form-grid">
               <label>
@@ -728,14 +992,12 @@ export default function StockTransactionsPage() {
 
           <h3>Danh sách phiếu nhập</h3>
           {renderReceiptTable(receipts)}
-          {renderDetails(selectedReceipt, 'receipt')}
         </section>
       )}
 
       {activeTab === 'issue' && (
         <section className="stock-section">
-          <div className="stock-section-heading"><div><span className="stock-section-kicker">PHIẾU XUẤT</span><h2>Tạo phiếu xuất kho</h2><p>Chọn lô còn tồn, kiểm tra hạn dùng và số lượng trước khi xác nhận.</p></div><span className="stock-step-badge">02</span></div>
-          <p>Chỉ xác nhận phiếu sau khi đã kiểm tra lô và số lượng thực xuất.</p>
+          <div className="stock-section-heading"><div><span className="stock-section-kicker">PHIẾU XUẤT</span><h2>Tạo phiếu xuất kho</h2></div><span className="stock-step-badge">02</span></div>
           <form onSubmit={handleCreateIssue}>
             <div className="stock-form-grid">
               <label>
@@ -783,29 +1045,31 @@ export default function StockTransactionsPage() {
               </label>
             </div>
 
-            <h4>Danh sách lô xuất</h4>
+            <h4>Danh sách sản phẩm xuất</h4>
+
             {issueForm.details.map((line, index) => (
               <div className="stock-line-card" key={index}>
                 <div className="stock-form-grid">
                   <label>
-                    Lô hàng *
+                    Sản phẩm *
                     <select
                       required
-                      value={line.batch_id}
-                      onChange={(e) => updateIssueDetail(index, 'batch_id', e.target.value)}
+                      value={line.product_id}
+                      onChange={(e) =>
+                        loadIssueableLots(index, e.target.value)
+                      }
                     >
-                      <option value="">-- Chọn lô còn hàng --</option>
-                      {batches.filter((batch) => Number(batch.current_qty) > 0).map((batch) => (
-                        <option key={batch.id} value={batch.id}>
-                          {batch.product_name || `Sản phẩm ID ${batch.product_id}`}
-                          {' — '}{batch.batch_number}
-                          {' — Tồn: '}{batch.current_qty}
-                          {' — HSD: '}{dateText(batch.expiry_date)}
-                          {' — Lô ID '}{batch.id}
+                      <option value="">-- Chọn sản phẩm --</option>
+
+                      {products.map((product) => (
+                        <option key={product.id} value={product.id}>
+                          {product.sku ? `${product.sku} — ` : ''}
+                          {product.name || product.product_name || `ID ${product.id}`}
                         </option>
                       ))}
                     </select>
                   </label>
+
                   <label>
                     Số lượng xuất *
                     <input
@@ -814,10 +1078,83 @@ export default function StockTransactionsPage() {
                       step="1"
                       required
                       value={line.quantity}
-                      onChange={(e) => updateIssueDetail(index, 'quantity', e.target.value)}
+                      onChange={(e) =>
+                        updateIssueDetail(index, 'quantity', e.target.value)
+                      }
                     />
                   </label>
+                  <label className="stock-full">
+                    <input
+                      type="checkbox"
+                      checked={!!line.useException}
+                      onChange={(e) => {
+                        updateIssueDetail(index, 'useException', e.target.checked);
+                        updateIssueDetail(index, 'requested_batch_id', '');
+                        updateIssueDetail(index, 'requested_cost_lot_id', '');
+                        updateIssueDetail(index, 'exception_reason', '');
+                      }}
+                    />
+                    Chọn cost lot khác FEFO (cần Admin/Store Manager duyệt)
+                  </label>
+
+                  {line.useException && (
+                    <>
+                      <label className="stock-full">
+                        Cost lot muốn xuất *
+                        <select
+                          required
+                          value={line.requested_cost_lot_id}
+                          disabled={line.loadingLots}
+                          onChange={(e) => {
+                            const lot = line.availableLots.find(
+                              (item) => String(item.cost_lot_id) === e.target.value
+                            );
+
+                            updateIssueDetail(index, 'requested_cost_lot_id', e.target.value);
+                            updateIssueDetail(
+                              index,
+                              'requested_batch_id',
+                              lot ? String(lot.batch_id) : ''
+                            );
+                          }}
+                        >
+                          <option value="">
+                            {line.loadingLots ? 'Đang tải cost lot...' : '-- Chọn cost lot --'}
+                          </option>
+
+                          {line.availableLots.map((lot) => (
+                            <option
+                              key={lot.cost_lot_id}
+                              value={lot.cost_lot_id}
+                              disabled={
+                                Number(lot.remaining_qty) <= 0 ||
+                                Number(lot.current_qty) <= 0
+                              }
+                            >
+                              {lot.batch_number}
+                              {' — HSD: '}{dateText(lot.expiry_date)}
+                              {' — Giá vốn: '}{money(lot.unit_cost)} ₫
+                              {' — Còn: '}{lot.remaining_qty}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label className="stock-full">
+                        Lý do chọn cost lot khác FEFO *
+                        <textarea
+                          required
+                          value={line.exception_reason}
+                          onChange={(e) =>
+                            updateIssueDetail(index, 'exception_reason', e.target.value)
+                          }
+                          placeholder="Nhập lý do cần xuất lô này..."
+                        />
+                      </label>
+                    </>
+                  )}
                 </div>
+
                 {issueForm.details.length > 1 && (
                   <button
                     type="button"
@@ -832,7 +1169,7 @@ export default function StockTransactionsPage() {
 
             <div className="stock-form-actions">
               <button type="button" className="erp-btn" onClick={addIssueDetail}>
-                + Thêm lô
+                + Thêm sản phẩm
               </button>
               <button type="submit" className="erp-btn erp-btn-primary" disabled={saving}>
                 {saving ? 'Đang lưu...' : 'Tạo phiếu xuất nháp'}
@@ -842,14 +1179,12 @@ export default function StockTransactionsPage() {
 
           <h3>Danh sách phiếu xuất</h3>
           {renderIssueTable(issues)}
-          {renderDetails(selectedIssue, 'issue')}
         </section>
       )}
 
       {activeTab === 'history' && (
         <section className="stock-section">
           <h3>Lịch sử phiếu nhập / xuất</h3>
-          <p>Danh sách được lấy từ API. Bấm “Chi tiết” để xem các dòng hàng.</p>
 
           <h4>Phiếu nhập</h4>
           {renderReceiptTable(receipts)}
@@ -857,8 +1192,106 @@ export default function StockTransactionsPage() {
           <h4>Phiếu xuất</h4>
           {renderIssueTable(issues)}
 
-          {renderDetails(selectedReceipt, 'receipt')}
-          {renderDetails(selectedIssue, 'issue')}
+        </section>
+      )}
+      {activeTab === 'fefo' && canReviewFefo && (
+        <section className="stock-section">
+          <div className="stock-section-heading">
+            <div>
+              <span className="stock-section-kicker">FEFO EXCEPTIONS</span>
+              <h2>Duyệt yêu cầu xuất khác FEFO</h2>
+            </div>
+
+            <button
+              type="button"
+              className="erp-btn"
+              onClick={loadFefoExceptions}
+              disabled={loadingExceptions}
+            >
+              {loadingExceptions ? 'Đang tải...' : '↻ Làm mới'}
+            </button>
+          </div>
+
+          <div className="stock-table-wrap">
+            <table className="stock-table">
+              <thead>
+                <tr>
+                  <th>Mã phiếu xuất</th>
+                  <th>Sản phẩm</th>
+                  <th>Số lượng</th>
+                  <th>Lô FEFO</th>
+                  <th>Lô yêu cầu</th>
+                  <th>Cost lot ID</th>
+                  <th>Lý do</th>
+                  <th>Người yêu cầu</th>
+                  <th>Trạng thái</th>
+                  <th>Thao tác</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {loadingExceptions ? (
+                  <tr>
+                    <td colSpan="10">Đang tải danh sách yêu cầu...</td>
+                  </tr>
+                ) : fefoExceptions.length ? (
+                  fefoExceptions.map((item) => (
+                    <tr key={item.id}>
+                      <td>{item.issue_code || '—'}</td>
+
+                      <td>
+                        {item.product_name || '—'}
+                        <br />
+                        <small>SKU: {item.sku || '—'}</small>
+                      </td>
+
+                      <td>{item.requested_qty ?? '—'}</td>
+                      <td>{item.suggested_batch_number || '—'}</td>
+                      <td>{item.requested_batch_number || '—'}</td>
+                      <td>{item.requested_cost_lot_id ?? '—'}</td>
+                      <td>{item.reason || '—'}</td>
+                      <td>{item.requested_by_name || '—'}</td>
+                      <td>{item.status || '—'}</td>
+
+                      <td className="stock-actions">
+                        {item.status === 'PENDING' ? (
+                          <>
+                            <button
+                              type="button"
+                              className="erp-btn erp-btn-primary"
+                              disabled={reviewingException}
+                              onClick={() =>
+                                reviewFefoException(item.id, 'approve')
+                              }
+                            >
+                              Duyệt
+                            </button>
+
+                            <button
+                              type="button"
+                              className="erp-btn"
+                              disabled={reviewingException}
+                              onClick={() =>
+                                reviewFefoException(item.id, 'reject')
+                              }
+                            >
+                              Từ chối
+                            </button>
+                          </>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan="10">Chưa có yêu cầu ngoại lệ FEFO.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </section>
       )}
     </div>
