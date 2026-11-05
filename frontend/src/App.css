@@ -1,10 +1,23 @@
 /* === 1. GIAO DIỆN LIGHT THEME ERP CHUẨN === */
 :root {
-  --primary-blue: #3b82f6;
+  /* Màu chủ đạo toàn ứng dụng */
+  --color-primary: #3b82f6;
+  --color-primary-hover: #2563eb;
+  --color-primary-soft: #eff6ff;
+
+  /* Màu trạng thái */
+  --color-success: #16a34a;
+  --color-warning: #d97706;
+  --color-danger: #dc2626;
+
+  /* Màu nền và chữ */
   --bg-light: #f8f9fa;
   --text-dark: #1e293b;
   --text-gray: #64748b;
   --border-light: #e2e8f0;
+
+  /* Giữ tương thích với CSS cũ */
+  --primary-blue: var(--color-primary);
 }
 
 body { background-color: var(--bg-light); color: var(--text-dark); font-family: 'Inter', -apple-system, sans-serif; margin: 0; }

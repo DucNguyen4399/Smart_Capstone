@@ -83,8 +83,13 @@ class ReceiptCreate(BaseModel):
 
 
 class IssueDetailInput(BaseModel):
-    batch_id: int
+    product_id: int
     quantity: int = Field(gt=0)
+
+    # Chỉ có giá trị khi nhân viên yêu cầu xuất khác FEFO
+    requested_batch_id: Optional[int] = None
+    requested_cost_lot_id: Optional[int] = None
+    exception_reason: Optional[str] = None
 
 
 class IssueCreate(BaseModel):
@@ -94,7 +99,8 @@ class IssueCreate(BaseModel):
     reason: Optional[str] = None
     note: Optional[str] = None
     details: list[IssueDetailInput] = Field(min_length=1)
-
+class FefoExceptionReview(BaseModel):
+    review_note: Optional[str] = None
 
 # ---------- CREATE RECEIPT DRAFT ----------
 
@@ -102,7 +108,7 @@ class IssueCreate(BaseModel):
 def create_receipt(
     data: ReceiptCreate,
     current_user: dict = Depends(
-        require_roles("Admin", "Store Manager")
+        require_roles("Admin", "Store Manager", "Store Staff")
     )
 ):
     conn = get_db()
@@ -245,45 +251,46 @@ def confirm_receipt(
                 batch = cursor.fetchone()
 
                 if batch:
-                    # Chỉ cộng tồn khi xác nhận phiếu.
+                    # Batch vật lý có thể chứa nhiều lần nhập với giá khác nhau.
                     cursor.execute(
                         """
                         UPDATE batches
                         SET original_qty = original_qty + %s,
                             current_qty = current_qty + %s,
-                            import_date = %s,
-                            expiry_date = %s
+                            import_date = LEAST(import_date, %s),
+                            expiry_date = LEAST(expiry_date, %s)
                         WHERE id = %s
                         """,
-                        (
-                            item["quantity"],
-                            item["quantity"],
-                            item["import_date"],
-                            item["expiry_date"],
-                            batch["id"]
-                        )
+                        (item["quantity"], item["quantity"],
+                         item["import_date"], item["expiry_date"], batch["id"])
                     )
+                    batch_id = batch["id"]
                 else:
                     cursor.execute(
                         """
                         INSERT INTO batches
-                        (
-                            product_id, batch_number, import_date,
-                            expiry_date, original_qty, current_qty,
-                            risk_level
-                        )
+                        (product_id, batch_number, import_date, expiry_date,
+                         original_qty, current_qty, risk_level)
                         VALUES (%s, %s, %s, %s, %s, %s, %s)
                         """,
-                        (
-                            item["product_id"],
-                            item["batch_number"],
-                            item["import_date"],
-                            item["expiry_date"],
-                            item["quantity"],
-                            item["quantity"],
-                            "Safe"
-                        )
+                        (item["product_id"], item["batch_number"],
+                         item["import_date"], item["expiry_date"],
+                         item["quantity"], item["quantity"], "Safe")
                     )
+                    batch_id = cursor.lastrowid
+
+                # Mỗi dòng nhập tạo một cost lot riêng, không gộp giá vốn.
+                if item["unit_cost"] is None:
+                    raise HTTPException(400, "Chi tiết phiếu nhập phải có giá nhập đơn vị để theo dõi giá vốn")
+                cursor.execute(
+                    """
+                    INSERT INTO batch_cost_lots
+                        (batch_id, receipt_detail_id, unit_cost, received_qty, remaining_qty)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (batch_id, item["detail_id"], item["unit_cost"],
+                     item["quantity"], item["quantity"])
+                )
 
             cursor.execute(
                 """
@@ -373,40 +380,193 @@ def get_receipt_detail(
 def create_issue(
     data: IssueCreate,
     current_user: dict = Depends(
-        require_roles("Admin", "Store Manager")
+        require_roles("Admin", "Store Manager", "Store Staff")
     )
 ):
     conn = get_db()
+
     try:
         with conn.cursor() as cursor:
+            print("CURRENT USER:", current_user)
             cursor.execute(
                 """
-                INSERT INTO goods_issues
-                    (issue_code, issue_date, recipient, reason, note, created_by)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO goods_issues (
+                    issue_code, issue_date, recipient, reason, note, status, created_by
+                )
+                VALUES (%s, %s, %s, %s, %s, 'DRAFT', %s)
                 """,
                 (
                     data.issue_code,
-                    data.issue_date,
+                    data.issue_date or datetime.now(),
                     data.recipient,
                     data.reason,
                     data.note,
                     int(current_user["sub"])
                 )
             )
+
             issue_id = cursor.lastrowid
+            requested_by = int(current_user["sub"])
+            today = date.today()
 
             for item in data.details:
+                # Kiểm tra sản phẩm
+                cursor.execute(
+                    "SELECT id FROM products WHERE id = %s",
+                    (item.product_id,)
+                )
+                if not cursor.fetchone():
+                    raise HTTPException(
+                        404,
+                        f"Không tìm thấy sản phẩm ID {item.product_id}"
+                    )
+
+                is_exception = (
+                    item.requested_batch_id is not None
+                    or item.requested_cost_lot_id is not None
+                    or item.exception_reason is not None
+                )
+
+                # Tạo chi tiết phiếu xuất nháp
                 cursor.execute(
                     """
                     INSERT INTO goods_issue_details
-                        (issue_id, batch_id, quantity)
+                        (issue_id, product_id, quantity)
                     VALUES (%s, %s, %s)
                     """,
-                    (issue_id, item.batch_id, item.quantity)
+                    (issue_id, item.product_id, item.quantity)
+                )
+                detail_id = cursor.lastrowid
+
+                # Không có yêu cầu ngoại lệ: giữ luồng FEFO mặc định
+                if not is_exception:
+                    continue
+
+                # Phải cung cấp đủ thông tin ngoại lệ
+                if (
+                    item.requested_batch_id is None
+                    or item.requested_cost_lot_id is None
+                    or not item.exception_reason
+                    or not item.exception_reason.strip()
+                ):
+                    raise HTTPException(
+                        400,
+                        "Yêu cầu ngoại lệ FEFO phải có batch, cost lot và lý do"
+                    )
+
+                # Kiểm tra cost lot thuộc đúng sản phẩm và batch
+                cursor.execute(
+                    """
+                    SELECT
+                        cl.id AS cost_lot_id,
+                        cl.batch_id,
+                        cl.remaining_qty,
+                        cl.unit_cost,
+                        b.product_id,
+                        b.batch_number,
+                        b.expiry_date,
+                        b.current_qty
+                    FROM batch_cost_lots cl
+                    JOIN batches b ON b.id = cl.batch_id
+                    WHERE cl.id = %s
+                      AND b.id = %s
+                      AND b.product_id = %s
+                    FOR UPDATE
+                    """,
+                    (
+                        item.requested_cost_lot_id,
+                        item.requested_batch_id,
+                        item.product_id
+                    )
+                )
+                selected_lot = cursor.fetchone()
+
+                if not selected_lot:
+                    raise HTTPException(
+                        404,
+                        "Cost lot không tồn tại hoặc không thuộc sản phẩm/lô đã chọn"
+                    )
+
+                if selected_lot["expiry_date"] < today:
+                    raise HTTPException(
+                        400,
+                        "Không thể yêu cầu xuất lô đã hết hạn"
+                    )
+
+                if (
+                    int(selected_lot["remaining_qty"]) < item.quantity
+                    or int(selected_lot["current_qty"]) < item.quantity
+                ):
+                    raise HTTPException(
+                        400,
+                        "Số lượng tồn của cost lot hoặc batch không đủ"
+                    )
+
+                # Tìm cost lot FEFO ưu tiên hiện tại
+                cursor.execute(
+                    """
+                    SELECT cl.id AS cost_lot_id, cl.batch_id
+                    FROM batch_cost_lots cl
+                    JOIN batches b ON b.id = cl.batch_id
+                    WHERE b.product_id = %s
+                      AND cl.remaining_qty > 0
+                      AND b.current_qty > 0
+                      AND b.expiry_date >= %s
+                    ORDER BY
+                        b.expiry_date ASC,
+                        b.import_date ASC,
+                        cl.id ASC
+                    LIMIT 1
+                    """,
+                    (item.product_id, today)
+                )
+                fefo_lot = cursor.fetchone()
+
+                if not fefo_lot:
+                    raise HTTPException(
+                        400,
+                        "Sản phẩm hiện không có cost lot hợp lệ để xuất theo FEFO"
+                    )
+
+                if int(fefo_lot["cost_lot_id"]) == item.requested_cost_lot_id:
+                    raise HTTPException(
+                        400,
+                        "Lô đã chọn đang là lô FEFO ưu tiên, không cần tạo yêu cầu ngoại lệ"
+                    )
+
+                # Ghi yêu cầu ngoại lệ, chưa trừ tồn kho
+                cursor.execute(
+                    """
+                    INSERT INTO fefo_exception_requests
+                    (
+                        issue_id,
+                        detail_id,
+                        product_id,
+                        suggested_batch_id,
+                        requested_batch_id,
+                        requested_cost_lot_id,
+                        requested_qty,
+                        reason,
+                        status,
+                        requested_by
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'PENDING', %s)
+                    """,
+                    (
+                        issue_id,
+                        detail_id,
+                        item.product_id,
+                        fefo_lot["batch_id"],
+                        item.requested_batch_id,
+                        item.requested_cost_lot_id,
+                        item.quantity,
+                        item.exception_reason.strip(),
+                        requested_by
+                    )
                 )
 
         conn.commit()
+
         return {
             "message": "Tạo phiếu xuất nháp thành công",
             "issue_id": issue_id,
@@ -416,33 +576,38 @@ def create_issue(
     except HTTPException:
         conn.rollback()
         raise
+
     except pymysql.err.IntegrityError as exc:
         conn.rollback()
+        print("CREATE ISSUE INTEGRITY ERROR:", repr(exc))
         raise HTTPException(
             status_code=409,
-            detail="Mã phiếu xuất đã tồn tại hoặc dữ liệu không hợp lệ"
+            detail=f"Database integrity error: {exc}"
         ) from exc
+
     except Exception as exc:
         conn.rollback()
         raise HTTPException(
-            status_code=500,
-            detail=f"Lỗi tạo phiếu xuất: {str(exc)}"
+            500,
+            f"Lỗi tạo phiếu xuất: {str(exc)}"
         ) from exc
+
     finally:
         conn.close()
+
 
 @app.post("/api/v1/issues/{issue_id}/confirm")
 def confirm_issue(
     issue_id: int,
     current_user: dict = Depends(
-        require_roles("Admin", "Store Manager")
+        require_roles("Admin", "Store Manager", "Store Staff")
     )
 ):
     conn = get_db()
+
     try:
         with conn.cursor() as cursor:
-            cursor.execute("SELECT DATABASE() AS db_name")
-            print("DEBUG DATABASE:", cursor.fetchone())
+            # 1. Khóa phiếu xuất
             cursor.execute(
                 """
                 SELECT *
@@ -463,70 +628,334 @@ def confirm_issue(
                     "Chỉ được xác nhận phiếu đang ở trạng thái DRAFT"
                 )
 
+            # 2. Lấy tất cả chi tiết chưa được phân bổ
             cursor.execute(
                 """
-                SELECT batch_id, SUM(quantity) AS total_qty
+                SELECT detail_id, product_id, quantity
                 FROM goods_issue_details
                 WHERE issue_id = %s
-                GROUP BY batch_id
-                ORDER BY batch_id
+                  AND batch_id IS NULL
+                ORDER BY detail_id
+                FOR UPDATE
                 """,
                 (issue_id,)
             )
-            details = cursor.fetchall()
+            draft_details = cursor.fetchall()
 
-            if not details:
-                raise HTTPException(400, "Phiếu xuất chưa có chi tiết")
+            if not draft_details:
+                raise HTTPException(
+                    400,
+                    "Phiếu xuất không có dòng sản phẩm cần phân bổ"
+                )
 
-            for item in details:
+            today = date.today()
+
+            for draft in draft_details:
+                detail_id = draft["detail_id"]
+                product_id = draft["product_id"]
+                requested_qty = int(draft["quantity"])
+
+                # 3. Kiểm tra yêu cầu ngoại lệ của dòng này
                 cursor.execute(
                     """
-                    SELECT id, current_qty, expiry_date
-                    FROM batches
-                    WHERE id = %s
+                    SELECT *
+                    FROM fefo_exception_requests
+                    WHERE detail_id = %s
                     FOR UPDATE
                     """,
-                    (item["batch_id"],)
+                    (detail_id,)
                 )
-                batch = cursor.fetchone()
+                exception = cursor.fetchone()
 
-                if not batch:
-                    raise HTTPException(
-                        404,
-                        f"Không tìm thấy lô ID {item['batch_id']}"
+                if exception:
+                    if exception["status"] == "PENDING":
+                        raise HTTPException(
+                            409,
+                            f"Dòng chi tiết {detail_id} đang chờ duyệt ngoại lệ FEFO"
+                        )
+
+                    if exception["status"] == "REJECTED":
+                        raise HTTPException(
+                            409,
+                            f"Dòng chi tiết {detail_id} đã bị từ chối ngoại lệ FEFO"
+                        )
+
+                    if exception["status"] != "APPROVED":
+                        raise HTTPException(
+                            409,
+                            "Trạng thái yêu cầu ngoại lệ không hợp lệ"
+                        )
+
+                    # Đảm bảo dữ liệu yêu cầu vẫn khớp chi tiết phiếu
+                    if (
+                        int(exception["product_id"]) != int(product_id)
+                        or int(exception["requested_qty"]) != requested_qty
+                    ):
+                        raise HTTPException(
+                            409,
+                            "Thông tin yêu cầu ngoại lệ không còn khớp chi tiết phiếu xuất"
+                        )
+
+                    # 4. Xuất đúng cost lot đã được duyệt
+                    cursor.execute(
+                        """
+                        SELECT
+                            cl.id AS cost_lot_id,
+                            cl.batch_id,
+                            cl.unit_cost,
+                            cl.remaining_qty,
+                            b.current_qty,
+                            b.expiry_date
+                        FROM batch_cost_lots cl
+                        JOIN batches b ON b.id = cl.batch_id
+                        WHERE cl.id = %s
+                          AND b.id = %s
+                          AND b.product_id = %s
+                        FOR UPDATE
+                        """,
+                        (
+                            exception["requested_cost_lot_id"],
+                            exception["requested_batch_id"],
+                            product_id
+                        )
+                    )
+                    lot = cursor.fetchone()
+
+                    if not lot:
+                        raise HTTPException(
+                            409,
+                            "Cost lot đã duyệt không còn hợp lệ"
+                        )
+
+                    if lot["expiry_date"] < today:
+                        raise HTTPException(
+                            409,
+                            "Cost lot đã hết hạn, không thể xuất"
+                        )
+
+                    if (
+                        int(lot["remaining_qty"]) < requested_qty
+                        or int(lot["current_qty"]) < requested_qty
+                    ):
+                        raise HTTPException(
+                            409,
+                            "Tồn kho cost lot đã thay đổi, không đủ số lượng xuất"
+                        )
+
+                    unit_cost = Decimal(str(lot["unit_cost"]))
+                    total_cost = unit_cost * requested_qty
+
+                    cursor.execute(
+                        """
+                        UPDATE batch_cost_lots
+                        SET remaining_qty = remaining_qty - %s
+                        WHERE id = %s
+                          AND remaining_qty >= %s
+                        """,
+                        (
+                            requested_qty,
+                            lot["cost_lot_id"],
+                            requested_qty
+                        )
                     )
 
-                if batch["expiry_date"] < date.today():
-                    raise HTTPException(
-                        400,
-                        f"Lô ID {item['batch_id']} đã hết hạn"
+                    if cursor.rowcount != 1:
+                        raise HTTPException(
+                            409,
+                            "Tồn cost lot vừa thay đổi, vui lòng thử lại"
+                        )
+
+                    cursor.execute(
+                        """
+                        UPDATE batches
+                        SET current_qty = current_qty - %s
+                        WHERE id = %s
+                          AND current_qty >= %s
+                        """,
+                        (
+                            requested_qty,
+                            lot["batch_id"],
+                            requested_qty
+                        )
                     )
 
-                if batch["current_qty"] < item["total_qty"]:
-                    raise HTTPException(
-                        400,
-                        f"Lô ID {item['batch_id']} không đủ tồn kho"
+                    if cursor.rowcount != 1:
+                        raise HTTPException(
+                            409,
+                            "Tồn kho batch vừa thay đổi, vui lòng thử lại"
+                        )
+
+                    cursor.execute(
+                        """
+                        UPDATE goods_issue_details
+                        SET batch_id = %s,
+                            cost_lot_id = %s,
+                            unit_cost = %s,
+                            total_cost = %s
+                        WHERE detail_id = %s
+                        """,
+                        (
+                            lot["batch_id"],
+                            lot["cost_lot_id"],
+                            unit_cost,
+                            total_cost,
+                            detail_id
+                        )
                     )
 
-                cursor.execute(
-                    """
-                    UPDATE batches
-                    SET current_qty = current_qty - %s
-                    WHERE id = %s AND current_qty >= %s
-                    """,
-                    (
-                        item["total_qty"],
-                        item["batch_id"],
-                        item["total_qty"]
+                else:
+                    # 5. Không có ngoại lệ: xuất theo FEFO mặc định
+                    cursor.execute(
+                        """
+                        SELECT
+                            cl.id AS cost_lot_id,
+                            cl.batch_id,
+                            cl.unit_cost,
+                            cl.remaining_qty,
+                            b.expiry_date,
+                            b.batch_number,
+                            b.current_qty
+                        FROM batch_cost_lots cl
+                        JOIN batches b ON b.id = cl.batch_id
+                        WHERE b.product_id = %s
+                          AND cl.remaining_qty > 0
+                          AND b.current_qty > 0
+                          AND b.expiry_date >= %s
+                        ORDER BY
+                            b.expiry_date ASC,
+                            b.import_date ASC,
+                            cl.id ASC
+                        FOR UPDATE
+                        """,
+                        (product_id, today)
                     )
-                )
+                    lots = cursor.fetchall()
 
-                if cursor.rowcount != 1:
-                    raise HTTPException(
-                        409,
-                        "Tồn kho thay đổi; hãy tải lại dữ liệu và thử lại"
+                    available = sum(
+                        int(lot["remaining_qty"])
+                        for lot in lots
                     )
 
+                    if available < requested_qty:
+                        raise HTTPException(
+                            400,
+                            f"Sản phẩm ID {product_id} chỉ còn {available} "
+                            f"đơn vị có cost lot hợp lệ; cần {requested_qty}."
+                        )
+
+                    qty_left = requested_qty
+                    first_allocation = True
+
+                    for lot in lots:
+                        if qty_left <= 0:
+                            break
+
+                        take_qty = min(
+                            qty_left,
+                            int(lot["remaining_qty"])
+                        )
+
+                        unit_cost = Decimal(str(lot["unit_cost"]))
+                        total_cost = unit_cost * take_qty
+
+                        cursor.execute(
+                            """
+                            UPDATE batch_cost_lots
+                            SET remaining_qty = remaining_qty - %s
+                            WHERE id = %s
+                              AND remaining_qty >= %s
+                            """,
+                            (
+                                take_qty,
+                                lot["cost_lot_id"],
+                                take_qty
+                            )
+                        )
+
+                        if cursor.rowcount != 1:
+                            raise HTTPException(
+                                409,
+                                "Tồn cost lot vừa thay đổi, vui lòng thử lại"
+                            )
+
+                        cursor.execute(
+                            """
+                            UPDATE batches
+                            SET current_qty = current_qty - %s
+                            WHERE id = %s
+                              AND current_qty >= %s
+                            """,
+                            (
+                                take_qty,
+                                lot["batch_id"],
+                                take_qty
+                            )
+                        )
+
+                        if cursor.rowcount != 1:
+                            raise HTTPException(
+                                409,
+                                "Tồn kho batch vừa thay đổi, vui lòng thử lại"
+                            )
+
+                        if first_allocation:
+                            cursor.execute(
+                                """
+                                UPDATE goods_issue_details
+                                SET batch_id = %s,
+                                    cost_lot_id = %s,
+                                    quantity = %s,
+                                    unit_cost = %s,
+                                    total_cost = %s
+                                WHERE detail_id = %s
+                                """,
+                                (
+                                    lot["batch_id"],
+                                    lot["cost_lot_id"],
+                                    take_qty,
+                                    unit_cost,
+                                    total_cost,
+                                    detail_id
+                                )
+                            )
+
+                            first_allocation = False
+
+                        else:
+                            cursor.execute(
+                                """
+                                INSERT INTO goods_issue_details
+                                (
+                                    issue_id,
+                                    product_id,
+                                    batch_id,
+                                    quantity,
+                                    cost_lot_id,
+                                    unit_cost,
+                                    total_cost
+                                )
+                                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                """,
+                                (
+                                    issue_id,
+                                    product_id,
+                                    lot["batch_id"],
+                                    take_qty,
+                                    lot["cost_lot_id"],
+                                    unit_cost,
+                                    total_cost
+                                )
+                            )
+
+                        qty_left -= take_qty
+
+                    if qty_left > 0:
+                        raise HTTPException(
+                            409,
+                            "Không thể phân bổ đủ số lượng theo FEFO"
+                        )
+
+            # 6. Chỉ xác nhận phiếu sau khi tất cả dòng đã xử lý thành công
             cursor.execute(
                 """
                 UPDATE goods_issues
@@ -539,17 +968,24 @@ def confirm_issue(
             )
 
         conn.commit()
-        return {"message": "Xác nhận phiếu xuất thành công"}
+
+        return {
+            "message": "Xác nhận phiếu xuất thành công",
+            "issue_id": issue_id,
+            "status": "CONFIRMED"
+        }
 
     except HTTPException:
         conn.rollback()
         raise
+
     except Exception as exc:
         conn.rollback()
         raise HTTPException(
-            status_code=500,
-            detail=f"Lỗi xác nhận phiếu xuất: {str(exc)}"
+            500,
+            f"Lỗi xác nhận phiếu xuất: {str(exc)}"
         ) from exc
+
     finally:
         conn.close()
 
@@ -599,18 +1035,320 @@ def get_issue_detail(
             cursor.execute(
                 """
                 SELECT
-                    d.detail_id, d.batch_id, d.quantity,
+                    d.detail_id, d.product_id, d.batch_id, d.cost_lot_id,
+                    d.quantity, d.unit_cost, d.total_cost,
                     b.batch_number, b.expiry_date,
                     p.name AS product_name, p.sku
                 FROM goods_issue_details d
-                JOIN batches b ON b.id = d.batch_id
-                JOIN products p ON p.id = b.product_id
+                LEFT JOIN batches b ON b.id = d.batch_id
+                JOIN products p ON p.id = COALESCE(d.product_id, b.product_id)
                 WHERE d.issue_id = %s
+                ORDER BY d.detail_id
                 """,
                 (issue_id,)
             )
             issue["details"] = cursor.fetchall()
             return issue
+    finally:
+        conn.close()
+@app.get("/api/v1/fefo-exceptions")
+def get_fefo_exceptions(
+    status_filter: Optional[str] = None,
+    current_user: dict = Depends(
+        require_roles("Admin", "Store Manager")
+    )
+):
+    conn = get_db()
+
+    try:
+        with conn.cursor() as cursor:
+            sql = """
+                SELECT
+                    r.id,
+                    r.issue_id,
+                    i.issue_code,
+                    r.detail_id,
+                    r.product_id,
+                    p.sku,
+                    p.name AS product_name,
+                    r.suggested_batch_id,
+                    sb.batch_number AS suggested_batch_number,
+                    r.requested_batch_id,
+                    rb.batch_number AS requested_batch_number,
+                    r.requested_cost_lot_id,
+                    r.requested_qty,
+                    r.reason,
+                    r.status,
+                    r.requested_by,
+                    requester.username AS requested_by_name,
+                    r.reviewed_by,
+                    reviewer.username AS reviewed_by_name,
+                    r.review_note,
+                    r.requested_at,
+                    r.reviewed_at
+                FROM fefo_exception_requests r
+                JOIN goods_issues i ON i.issue_id = r.issue_id
+                JOIN products p ON p.id = r.product_id
+                LEFT JOIN batches sb ON sb.id = r.suggested_batch_id
+                JOIN batches rb ON rb.id = r.requested_batch_id
+                LEFT JOIN users requester ON requester.id = r.requested_by
+                LEFT JOIN users reviewer ON reviewer.id = r.reviewed_by
+            """
+
+            params = []
+
+            if status_filter:
+                allowed_statuses = ["PENDING", "APPROVED", "REJECTED"]
+
+                if status_filter not in allowed_statuses:
+                    raise HTTPException(
+                        400,
+                        "Trạng thái lọc không hợp lệ"
+                    )
+
+                sql += " WHERE r.status = %s"
+                params.append(status_filter)
+
+            sql += " ORDER BY r.requested_at DESC, r.id DESC"
+
+            cursor.execute(sql, params)
+            return cursor.fetchall()
+
+    finally:
+        conn.close()
+@app.post("/api/v1/fefo-exceptions/{request_id}/approve")
+def approve_fefo_exception(
+    request_id: int,
+    data: FefoExceptionReview,
+    current_user: dict = Depends(
+        require_roles("Admin", "Store Manager")
+    )
+):
+    conn = get_db()
+
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT *
+                FROM fefo_exception_requests
+                WHERE id = %s
+                FOR UPDATE
+                """,
+                (request_id,)
+            )
+            request = cursor.fetchone()
+
+            if not request:
+                raise HTTPException(404, "Không tìm thấy yêu cầu ngoại lệ")
+
+            if request["status"] != "PENDING":
+                raise HTTPException(
+                    409,
+                    "Yêu cầu này đã được xử lý"
+                )
+
+            # Khóa phiếu xuất và kiểm tra còn là DRAFT
+            cursor.execute(
+                """
+                SELECT status
+                FROM goods_issues
+                WHERE issue_id = %s
+                FOR UPDATE
+                """,
+                (request["issue_id"],)
+            )
+            issue = cursor.fetchone()
+
+            if not issue or issue["status"] != "DRAFT":
+                raise HTTPException(
+                    409,
+                    "Phiếu xuất không còn ở trạng thái DRAFT"
+                )
+
+            # Kiểm tra chi tiết phiếu xuất
+            cursor.execute(
+                """
+                SELECT detail_id, product_id, quantity
+                FROM goods_issue_details
+                WHERE detail_id = %s AND issue_id = %s
+                FOR UPDATE
+                """,
+                (request["detail_id"], request["issue_id"])
+            )
+            detail = cursor.fetchone()
+
+            if (
+                not detail
+                or detail["product_id"] != request["product_id"]
+                or detail["quantity"] != request["requested_qty"]
+            ):
+                raise HTTPException(
+                    409,
+                    "Chi tiết phiếu xuất không còn khớp với yêu cầu"
+                )
+
+            # Kiểm tra cost lot và batch tại thời điểm duyệt
+            cursor.execute(
+                """
+                SELECT
+                    cl.id,
+                    cl.batch_id,
+                    cl.remaining_qty,
+                    b.product_id,
+                    b.current_qty,
+                    b.expiry_date
+                FROM batch_cost_lots cl
+                JOIN batches b ON b.id = cl.batch_id
+                WHERE cl.id = %s
+                  AND b.id = %s
+                  AND b.product_id = %s
+                FOR UPDATE
+                """,
+                (
+                    request["requested_cost_lot_id"],
+                    request["requested_batch_id"],
+                    request["product_id"]
+                )
+            )
+            lot = cursor.fetchone()
+
+            if not lot:
+                raise HTTPException(
+                    404,
+                    "Cost lot hoặc batch không còn hợp lệ"
+                )
+
+            if lot["expiry_date"] < date.today():
+                raise HTTPException(
+                    409,
+                    "Lô hàng đã hết hạn, không thể duyệt"
+                )
+
+            if (
+                lot["remaining_qty"] < request["requested_qty"]
+                or lot["current_qty"] < request["requested_qty"]
+            ):
+                raise HTTPException(
+                    409,
+                    "Tồn kho không đủ để duyệt yêu cầu"
+                )
+
+            cursor.execute(
+                """
+                UPDATE fefo_exception_requests
+                SET status = 'APPROVED',
+                    reviewed_by = %s,
+                    review_note = %s,
+                    reviewed_at = NOW()
+                WHERE id = %s AND status = 'PENDING'
+                """,
+                (
+                    int(current_user["sub"]),
+                    data.review_note,
+                    request_id
+                )
+            )
+
+            if cursor.rowcount != 1:
+                raise HTTPException(
+                    409,
+                    "Yêu cầu vừa được người khác xử lý"
+                )
+
+        conn.commit()
+
+        return {
+            "message": "Duyệt yêu cầu ngoại lệ FEFO thành công",
+            "request_id": request_id,
+            "status": "APPROVED",
+            "note": "Tồn kho chưa bị trừ. Tồn sẽ được cập nhật khi xác nhận phiếu xuất."
+        }
+
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(
+            500,
+            f"Lỗi duyệt yêu cầu: {str(exc)}"
+        ) from exc
+    finally:
+        conn.close()
+
+
+@app.post("/api/v1/fefo-exceptions/{request_id}/reject")
+def reject_fefo_exception(
+    request_id: int,
+    data: FefoExceptionReview,
+    current_user: dict = Depends(
+        require_roles("Admin", "Store Manager")
+    )
+):
+    conn = get_db()
+
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, status
+                FROM fefo_exception_requests
+                WHERE id = %s
+                FOR UPDATE
+                """,
+                (request_id,)
+            )
+            request = cursor.fetchone()
+
+            if not request:
+                raise HTTPException(404, "Không tìm thấy yêu cầu ngoại lệ")
+
+            if request["status"] != "PENDING":
+                raise HTTPException(
+                    409,
+                    "Yêu cầu này đã được xử lý"
+                )
+
+            cursor.execute(
+                """
+                UPDATE fefo_exception_requests
+                SET status = 'REJECTED',
+                    reviewed_by = %s,
+                    review_note = %s,
+                    reviewed_at = NOW()
+                WHERE id = %s AND status = 'PENDING'
+                """,
+                (
+                    int(current_user["sub"]),
+                    data.review_note,
+                    request_id
+                )
+            )
+
+            if cursor.rowcount != 1:
+                raise HTTPException(
+                    409,
+                    "Yêu cầu vừa được người khác xử lý"
+                )
+
+        conn.commit()
+
+        return {
+            "message": "Từ chối yêu cầu ngoại lệ FEFO thành công",
+            "request_id": request_id,
+            "status": "REJECTED"
+        }
+
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(
+            500,
+            f"Lỗi từ chối yêu cầu: {str(exc)}"
+        ) from exc
     finally:
         conn.close()
 
@@ -983,7 +1721,61 @@ class BatchCreate(BaseModel):
     expiry_date: str
     original_qty: int
 
+@app.get("/api/v1/products/{product_id}/issueable-cost-lots")
+def get_issueable_cost_lots(
+    product_id: int,
+    current_user: dict = Depends(get_current_user)
+):
+    conn = get_db()
 
+    try:
+        with conn.cursor() as cursor:
+            # Kiểm tra sản phẩm tồn tại
+            cursor.execute(
+                "SELECT id FROM products WHERE id = %s",
+                (product_id,)
+            )
+            product = cursor.fetchone()
+
+            if not product:
+                raise HTTPException(404, "Không tìm thấy sản phẩm")
+
+            # Lấy các cost lot còn hàng, chưa hết hạn
+            cursor.execute(
+                """
+                SELECT
+                    cl.id AS cost_lot_id,
+                    cl.batch_id,
+                    cl.unit_cost,
+                    cl.received_qty,
+                    cl.remaining_qty,
+                    b.batch_number,
+                    b.import_date,
+                    b.expiry_date,
+                    b.current_qty
+                FROM batch_cost_lots cl
+                JOIN batches b ON b.id = cl.batch_id
+                WHERE b.product_id = %s
+                  AND cl.remaining_qty > 0
+                  AND b.current_qty > 0
+                  AND b.expiry_date >= CURDATE()
+                ORDER BY
+                    b.expiry_date ASC,
+                    b.import_date ASC,
+                    cl.id ASC
+                """,
+                (product_id,)
+            )
+
+            lots = cursor.fetchall()
+
+            return {
+                "product_id": product_id,
+                "lots": lots
+            }
+
+    finally:
+        conn.close()
 @app.get("/api/v1/batches")
 def get_batches(current_user: dict = Depends(get_current_user)):
     conn = get_db()
@@ -1014,22 +1806,20 @@ def get_batches(current_user: dict = Depends(get_current_user)):
         conn.close()
 
 @app.post("/api/v1/batches")
-def create_batch(batch: BatchCreate, current_user: dict = Depends(get_current_user)):
-    if current_user['role'] not in ['Admin', 'Store Manager', 'Store Staff']:
-        raise HTTPException(status_code=403, detail="Không có quyền nhập kho")
-    conn = get_db()
-    try:
-        with conn.cursor() as cursor:
-            sql = """INSERT INTO batches (product_id, batch_number, import_date, expiry_date, original_qty, current_qty, risk_level)
-                     VALUES (%s, %s, %s, %s, %s, %s, %s)"""
-            cursor.execute(sql, (
-                batch.product_id, batch.batch_number, batch.import_date, 
-                batch.expiry_date, batch.original_qty, batch.original_qty, 'Safe'
-            ))
-            conn.commit()
-            return {"message": "Nhập lô hàng thành công"}
-    finally:
-        conn.close()
+def create_batch(
+    batch: BatchCreate,
+    current_user: dict = Depends(
+        require_roles("Admin", "Store Manager")
+    )
+):
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            "Không được tạo lô hàng trực tiếp. "
+            "Vui lòng tạo phiếu nhập và xác nhận phiếu nhập "
+            "để hệ thống tự động cập nhật tồn kho và giá vốn FEFO."
+        )
+    )
 class BatchUpdate(BaseModel):
     batch_number: str
     expiry_date: str
@@ -1040,21 +1830,21 @@ class BatchUpdate(BaseModel):
 def update_batch(
     batch_id: int,
     batch: BatchUpdate,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(
+        require_roles("Admin", "Store Manager")
+    )
 ):
-    if current_user['role'] not in ['Admin', 'Store Manager', 'Store Staff']:
-        raise HTTPException(
-            status_code=403,
-            detail="Không có quyền cập nhật lô hàng"
-        )
-
     conn = get_db()
 
     try:
         with conn.cursor() as cursor:
-
             cursor.execute(
-                "SELECT id FROM batches WHERE id = %s",
+                """
+                SELECT id, current_qty
+                FROM batches
+                WHERE id = %s
+                FOR UPDATE
+                """,
                 (batch_id,)
             )
 
@@ -1066,30 +1856,45 @@ def update_batch(
                     detail="Không tìm thấy lô hàng"
                 )
 
-            sql = """
-                UPDATE batches
-                SET batch_number = %s,
-                    expiry_date = %s,
-                    current_qty = %s
-                WHERE id = %s
-            """
+            if batch.current_qty != existing_batch["current_qty"]:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Không được sửa số lượng tồn trực tiếp. "
+                        "Tồn kho phải được cập nhật thông qua "
+                        "phiếu nhập hoặc phiếu xuất."
+                    )
+                )
 
             cursor.execute(
-                sql,
+                """
+                UPDATE batches
+                SET batch_number = %s,
+                    expiry_date = %s
+                WHERE id = %s
+                """,
                 (
                     batch.batch_number,
                     batch.expiry_date,
-                    batch.current_qty,
                     batch_id
                 )
             )
 
-            conn.commit()
+        conn.commit()
 
-            return {
-                "message": "Cập nhật lô hàng thành công"
-            }
+        return {
+            "message": "Cập nhật thông tin lô hàng thành công"
+        }
 
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Lỗi cập nhật lô hàng: {str(exc)}"
+        ) from exc
     finally:
         conn.close()
 @app.delete("/api/v1/batches/{batch_id}")

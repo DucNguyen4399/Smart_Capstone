@@ -1,4 +1,85 @@
-import React, { useState } from 'react';
+
+import React, { useState } from "react";
+import {
+  RefreshCw,
+  ShoppingCart,
+  Percent,
+  Wallet,
+  TrendingUp,
+  Package,
+  AlertTriangle,
+  Clock,
+  Info,
+  Plus,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  X,
+  ClipboardList,
+} from "lucide-react";
+import "./StockImportPage.css";
+
+const initialRestockRows = [
+  {
+    sku: "SP001",
+    name: "Sữa tươi thanh trùng 1L",
+    supplier: "Vinamilk Mart",
+    stock: "20 hộp",
+    demand: "80 hộp",
+    qty: 60,
+    unit: "hộp",
+    priority: "Cao",
+    tone: "high",
+  },
+  {
+    sku: "SP002",
+    name: "Nước ngọt lon 330ml",
+    supplier: "Coca-Cola VN",
+    stock: "45 lon",
+    demand: "60 lon",
+    qty: 15,
+    unit: "lon",
+    priority: "Trung bình",
+    tone: "medium",
+  },
+];
+
+const markdownRows = [
+  {
+    sku: "SP003",
+    name: "Sữa chua các vị đường 100g",
+    supplier: "Khu vực: Kệ lạnh L02",
+    lot: "LOT20260901",
+    stock: "35 hũ",
+    expiry: "3 ngày",
+    discount: "-20%",
+    price: "12.000 đ",
+    oldPrice: "15.000 đ",
+  },
+];
+
+function Metric({ label, value, suffix, note, icon: Icon, color = "blue" }) {
+  return (
+    <article className="sd-metric">
+      <div className="sd-metric-copy">
+        <div className="sd-label">{label}</div>
+        <div className={`sd-value ${color === "green" ? "green" : ""}`}>
+          {value}<small>{suffix}</small>
+        </div>
+      </div>
+      <span className={`sd-icon sd-icon-${color}`}>
+        <Icon size={20} strokeWidth={2} />
+      </span>
+      <div
+        className={`sd-note ${
+          color === "orange" ? "orange" : color === "green" ? "green" : ""
+        }`}
+      >
+        {note}
+      </div>
+    </article>
+  );
+}
 
 export default function StockImportPage() {
   const [selectedFile, setSelectedFile] = useState(null);
